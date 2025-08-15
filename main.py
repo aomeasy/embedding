@@ -59,18 +59,27 @@ def embed_text(texts):
     embeddings = []
     for t in texts:
         headers = {"Content-Type": "application/json"}
-        payload = {"text": t, "model": EMBEDDING_MODEL}
+        payload = {
+            "model": EMBEDDING_MODEL,
+            "prompt": t,
+            "stream": False
+        }
         try:
             print(f"🚀 Sending request to {EMBEDDING_API_URL} with model: {EMBEDDING_MODEL}")
             response = requests.post(EMBEDDING_API_URL, headers=headers, json=payload)
             print(f"🔁 Response: {response.status_code} {response.text}")
             response.raise_for_status()
             result = response.json()
-            embeddings.append(result.get("embedding", None))
+            if "embedding" in result:
+                embeddings.append(result["embedding"])
+            else:
+                print("⚠️ No embedding returned in response")
+                embeddings.append(None)
         except Exception as e:
             print("❌ Embedding API error:", e)
             embeddings.append(None)
     return embeddings
+
 
 # --- Prepare data ---
 texts = df["name"].tolist()
