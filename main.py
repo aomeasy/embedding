@@ -62,19 +62,25 @@ def embed_text(texts, model_name=None):
     headers = {"Content-Type": "application/json"}
     payload = {
         "model": model_name,
-        "prompt": texts if isinstance(texts, str) else "\n".join(texts),
+        "input": texts
     }
 
     try:
         print(f"🚀 Sending request to {url} with model: {model_name}")
         response = requests.post(url, headers=headers, json=payload)
-        print("🔁 Response:", response.status_code, response.text)
+        print("🔁 Response:", response.status_code, response.text[:80])
         response.raise_for_status()
-        data = response.json()
-        return [data["embedding"]] * len(texts)  # จำลองใช้ embedding เดียวกับทุกข้อความ
+        vectors_raw = response.json()
+
+        # ✅ แก้ตรงนี้
+        vectors = [item["embedding"] if isinstance(item, dict) and "embedding" in item else None for item in vectors_raw]
+        print("✅ Embedding received")
+        return vectors
+
     except Exception as e:
         print("❌ Embedding API error:", e)
         return [None] * len(texts)
+
 
 
 
