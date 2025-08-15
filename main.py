@@ -7,21 +7,28 @@ import json
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import ArgumentError
 from dotenv import load_dotenv
+from datetime import date
 
-# โหลดค่า env
+# โหลดค่าจาก .env
 load_dotenv()
 
+# --- Config ---
 TIDB_URL = os.getenv("TIDB_URL")
-EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://209.15.123.47:11434/api/embed")
+EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://209.15.123.47/embed")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "dengcao/Qwen3-Embedding-8B:Q4_K_M")
 
-print(f"🔎 Raw TIDB_URL = {repr(TIDB_URL)}")
-print(f"📦 Base64 of TIDB_URL = {base64.b64encode(TIDB_URL.encode()).decode()}")
-print(f"📡 EMBEDDING_API_URL = {EMBEDDING_API_URL}")
-print(f"📦 EMBEDDING_MODEL = {EMBEDDING_MODEL}")
-
-# --- Connect to TiDB ---
 print("\n🔧 Environment Setup")
+print("🔎 Raw TIDB_URL =", repr(TIDB_URL))
+if TIDB_URL:
+    print("📦 Base64 of TIDB_URL =", base64.b64encode(TIDB_URL.encode()).decode())
+else:
+    print("❌ TIDB_URL is not set! Check your environment variables.")
+    exit(1)
+
+print("📡 EMBEDDING_API_URL =", EMBEDDING_API_URL)
+print("📦 EMBEDDING_MODEL =", EMBEDDING_MODEL)
+
+# --- Test Connection ---
 try:
     engine = create_engine(TIDB_URL)
     with engine.connect() as conn:
@@ -31,10 +38,10 @@ except ArgumentError as e:
     print("❌ Invalid TIDB_URL format:", e)
     exit(1)
 except Exception as e:
-    print("❌ DB connection error:", e)
+    print("❌ Other error during DB connection:", e)
     exit(1)
 
-# --- Load data ---
+# --- Load customer data ---
 print("\n📥 Fetching data from customers table...")
 try:
     df = pd.read_sql("SELECT id, name, email, age, city, signup_date FROM customers", con=engine)
@@ -47,43 +54,33 @@ if df.empty:
     print("⚠️ No data found. Skipping embedding.")
     exit(0)
 
-# --- Call embedding API ---
+# --- Call embedding API (one-by-one for Qwen) ---
 def embed_text(texts):
-    url = EMBEDDING_API_URL
-    headers = {"Content-Type": "application/json"}
-
     embeddings = []
     for t in texts:
-        payload = {
-            "text": t,          # ✅ ไม่ใช้ "texts"
-            "truncate": True
-        }
-
+        headers = {"Content-Type": "application/json"}
+        payload = {"text": t, "model": EMBEDDING_MODEL}
         try:
-            print(f"📨 Sending text: {t}")
-            res = requests.post(url, headers=headers, json=payload)
-            res.raise_for_status()
-            data = res.json()
-
-            if "embedding" in data and isinstance(data["embedding"], list):
-                embeddings.append(data["embedding"])
-            else:
-                print(f"⚠️ Invalid response: {data}")
-                embeddings.append(None)
-
+            print(f"🚀 Sending request to {EMBEDDING_API_URL} with model: {EMBEDDING_MODEL}")
+            response = requests.post(EMBEDDING_API_URL, headers=headers, json=payload)
+            print(f"🔁 Response: {response.status_code} {response.text}")
+            response.raise_for_status()
+            result = response.json()
+            embeddings.append(result.get("embedding", None))
         except Exception as e:
-            print(f"❌ Error while embedding text '{t}':", e)
+            print("❌ Embedding API error:", e)
             embeddings.append(None)
-
     return embeddings
 
-
-# --- Prepare for insert ---
+# --- Prepare data ---
 texts = df["name"].tolist()
 ids = df["id"].tolist()
+# 🔁 Convert all date fields to str in metadata
+df["signup_date"] = df["signup_date"].apply(lambda d: d.isoformat() if isinstance(d, date) else d)
 metadatas = df.drop(columns=["name"]).to_dict(orient="records")
 
-vectors = embed_text(texts, EMBEDDING_MODEL)
+# --- Get embeddings ---
+vectors = embed_text(texts)
 
 # --- Insert into customer_vectors ---
 print("\n💾 Inserting embeddings into customer_vectors...")
