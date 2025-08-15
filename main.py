@@ -14,13 +14,17 @@ load_dotenv()
 # --- Config ---
 TIDB_URL = os.getenv("TIDB_URL")
 EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://209.15.123.47/embed")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-base-en-v1.5")  # optional
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-base-en-v1.5")
 
-tidb_url = os.getenv("TIDB_URL")
+print("\n🔧 Environment Setup")
+print("🔎 Raw TIDB_URL =", repr(TIDB_URL))
+if TIDB_URL:
+    print("📦 Base64 of TIDB_URL =", base64.b64encode(TIDB_URL.encode()).decode())
+else:
+    print("❌ TIDB_URL is not set! Check your environment variables.")
+    exit(1)
 
-print("🔎 Raw TIDB_URL =", repr(tidb_url))  # แสดง raw string
-print("📦 Base64 of TIDB_URL =", base64.b64encode(tidb_url.encode()).decode())
-
+# --- Test Connection ---
 try:
     engine = create_engine(TIDB_URL)
     with engine.connect() as conn:
@@ -28,60 +32,74 @@ try:
         print("✅ Connected to TiDB:", result.scalar())
 except ArgumentError as e:
     print("❌ Invalid TIDB_URL format:", e)
+    exit(1)
 except Exception as e:
-    print("❌ Other error:", e)
-    
-# --- Connect TiDB ---
-engine = create_engine(TIDB_URL)
+    print("❌ Other error during DB connection:", e)
+    exit(1)
 
-# --- ดึงข้อมูลจากตาราง customers ---
-query = "SELECT id, name, email, age, city, signup_date FROM customers"
-df = pd.read_sql(query, con=engine)
+# --- Load customer data ---
+print("\n📥 Fetching data from customers table...")
+try:
+    df = pd.read_sql("SELECT id, name, email, age, city, signup_date FROM customers", con=engine)
+    print(f"🔢 Found {len(df)} rows")
+except Exception as e:
+    print("❌ Failed to fetch data:", e)
+    exit(1)
 
-# --- สร้างฟังก์ชันเรียก embedding API ---
+if df.empty:
+    print("⚠️ No data found. Skipping embedding.")
+    exit(0)
+
+# --- Call embedding API ---
 def embed_text(texts, model_name=None):
     url = EMBEDDING_API_URL
     headers = {"Content-Type": "application/json"}
-    payload = {
-        "texts": texts,
-        "truncate": True
-    }
-    # ถ้ามีการระบุ model → ส่งเข้า payload
+    payload = {"texts": texts, "truncate": True}
     if model_name:
         payload["model"] = model_name
 
-    response = requests.post(url, headers=headers, json=payload)
-    if response.status_code == 200:
-        return response.json()["embeddings"]
-    else:
-        print("❌ ERROR:", response.status_code, response.text)
+    try:
+        print(f"🚀 Sending {len(texts)} texts to embedding API...")
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        print("✅ Embedding received")
+        return data.get("embeddings", [])
+    except Exception as e:
+        print("❌ Embedding API error:", e)
         return [None] * len(texts)
 
-# --- เตรียมข้อมูลที่ต้องการ embedding ---
+# --- Prepare data ---
 texts = df["name"].tolist()
 ids = df["id"].tolist()
 metadatas = df.drop(columns=["name"]).to_dict(orient="records")
 
-# --- เรียก embedding จาก API ---
+# --- Get embeddings ---
 vectors = embed_text(texts, EMBEDDING_MODEL)
 
-# --- Insert กลับเข้า TiDB ที่ตาราง customer_vectors ---
+# --- Insert into customer_vectors ---
+print("\n💾 Inserting embeddings into customer_vectors...")
+inserted = 0
 with engine.connect() as conn:
     for _id, name, vector, metadata in zip(ids, texts, vectors, metadatas):
         if vector is None:
+            print(f"⚠️ Skipped id={_id} due to missing vector")
             continue
-        vector_bytes = np.array(vector, dtype=np.float32).tobytes()
+        try:
+            vector_bytes = np.array(vector, dtype=np.float32).tobytes()
+            conn.execute(
+                text("""
+                    INSERT INTO customer_vectors (id, name, embedding, metadata)
+                    VALUES (:id, :name, :embedding, :metadata)
+                    ON DUPLICATE KEY UPDATE
+                      name = VALUES(name),
+                      embedding = VALUES(embedding),
+                      metadata = VALUES(metadata)
+                """),
+                {"id": _id, "name": name, "embedding": vector_bytes, "metadata": json.dumps(metadata)}
+            )
+            inserted += 1
+        except Exception as e:
+            print(f"❌ Insert failed for id={_id}:", e)
 
-        conn.execute(
-            """
-            INSERT INTO customer_vectors (id, name, embedding, metadata)
-            VALUES (%s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-              name = VALUES(name),
-              embedding = VALUES(embedding),
-              metadata = VALUES(metadata)
-            """,
-            (_id, name, vector_bytes, json.dumps(metadata))
-        )
-
-print("✅ Done! Embeddings inserted into customer_vectors.")
+print(f"\n✅ Done! {inserted} embeddings inserted into customer_vectors.")
