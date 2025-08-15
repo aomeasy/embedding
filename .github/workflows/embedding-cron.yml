@@ -2,13 +2,11 @@ name: Run Embedding
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 1 * * *'  # รันทุกวันตอนตี 1 UTC (8 โมงเช้าไทย)
 
 jobs:
   embed:
     runs-on: ubuntu-latest
-    environment: TIDB_URL   # <<< สำคัญ! ชื่อ Environment ต้องตรงกับที่คุณตั้ง
+    environment: TIDB_URL  # <<< ตรงนี้! ต้องชี้ไปที่ชื่อ Environment ของคุณให้ตรง
 
     steps:
       - name: Checkout
@@ -22,11 +20,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run embedding script
+      - name: Run script
         env:
           TIDB_URL: ${{ secrets.TIDB_URL }}
           EMBEDDING_API_URL: ${{ secrets.EMBEDDING_API_URL }}
           EMBEDDING_MODEL: ${{ secrets.EMBEDDING_MODEL }}
-        run: |
-          echo "🔑 Connecting to TIDB"
-          python main.py
+        run: python main.py
