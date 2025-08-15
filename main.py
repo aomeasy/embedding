@@ -60,20 +60,21 @@ if df.empty:
 def embed_text(texts, model_name=None):
     url = EMBEDDING_API_URL
     headers = {"Content-Type": "application/json"}
-    payload = {"input": texts}  # ตามรูปแบบของ nomic embed API
+    payload = {"texts": texts, "truncate": True}
     if model_name:
         payload["model"] = model_name
 
     try:
-        print(f"🚀 Sending {len(texts)} texts to embedding API...")
+        print(f"🚀 Sending request to {url} with model: {model_name}")
         response = requests.post(url, headers=headers, json=payload)
+        print("🔁 Response:", response.status_code, response.text)
         response.raise_for_status()
         data = response.json()
-        print("✅ Embedding received")
-        return data.get("data", [])
+        return data.get("embeddings", [])
     except Exception as e:
         print("❌ Embedding API error:", e)
         return [None] * len(texts)
+
 
 # --- Prepare data ---
 texts = df["name"].tolist()
