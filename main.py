@@ -60,9 +60,10 @@ if df.empty:
 def embed_text(texts, model_name=None):
     url = EMBEDDING_API_URL
     headers = {"Content-Type": "application/json"}
-    payload = {"texts": texts, "truncate": True}
-    if model_name:
-        payload["model"] = model_name
+    payload = {
+        "model": model_name,
+        "prompt": texts if isinstance(texts, str) else "\n".join(texts),
+    }
 
     try:
         print(f"🚀 Sending request to {url} with model: {model_name}")
@@ -70,10 +71,11 @@ def embed_text(texts, model_name=None):
         print("🔁 Response:", response.status_code, response.text)
         response.raise_for_status()
         data = response.json()
-        return data.get("embeddings", [])
+        return [data["embedding"]] * len(texts)  # จำลองใช้ embedding เดียวกับทุกข้อความ
     except Exception as e:
         print("❌ Embedding API error:", e)
         return [None] * len(texts)
+
 
 
 # --- Prepare data ---
