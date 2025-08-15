@@ -1,18 +1,20 @@
-name: Scheduled Embedding Sync
+name: Run Embedding
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: '0 2 * * *'  # ทุกวัน 02:00 UTC (หรือ +7 คือ 09:00 ไทย)
-  workflow_dispatch:     # สามารถกด Run เองได้ด้วย
+    - cron: '0 1 * * *'  # รันทุกวันตอนตี 1 UTC (8 โมงเช้าไทย)
 
 jobs:
   embed:
     runs-on: ubuntu-latest
+    environment: TIDB_URL   # <<< สำคัญ! ชื่อ Environment ต้องตรงกับที่คุณตั้ง
+
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -25,4 +27,6 @@ jobs:
           TIDB_URL: ${{ secrets.TIDB_URL }}
           EMBEDDING_API_URL: ${{ secrets.EMBEDDING_API_URL }}
           EMBEDDING_MODEL: ${{ secrets.EMBEDDING_MODEL }}
-        run: python main.py
+        run: |
+          echo "🔑 Connecting to TIDB"
+          python main.py
