@@ -6,42 +6,49 @@ import json
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
 
-# โหลด config จาก .env
+# โหลดค่าจาก .env
 load_dotenv()
-TIDB_URL = os.getenv("TIDB_URL")
-EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://209.15.123.47")
 
-# เชื่อมต่อ TiDB
+# --- Config ---
+TIDB_URL = os.getenv("TIDB_URL")
+EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://209.15.123.47/embed")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-base-en-v1.5")  # optional
+
+# --- Connect TiDB ---
 engine = create_engine(TIDB_URL)
 
-# ดึงข้อมูลจากตาราง customers
-df = pd.read_sql("SELECT id, name, email, age, city, signup_date FROM customers", con=engine)
+# --- ดึงข้อมูลจากตาราง customers ---
+query = "SELECT id, name, email, age, city, signup_date FROM customers"
+df = pd.read_sql(query, con=engine)
 
-# ฟังก์ชันเรียก embedding API
-def embed_text(texts):
-    url = f"{EMBEDDING_API_URL}/embed"
+# --- สร้างฟังก์ชันเรียก embedding API ---
+def embed_text(texts, model_name=None):
+    url = EMBEDDING_API_URL
     headers = {"Content-Type": "application/json"}
     payload = {
         "texts": texts,
         "truncate": True
     }
+    # ถ้ามีการระบุ model → ส่งเข้า payload
+    if model_name:
+        payload["model"] = model_name
 
     response = requests.post(url, headers=headers, json=payload)
     if response.status_code == 200:
         return response.json()["embeddings"]
     else:
-        print("❌ Error from embedding API:", response.text)
+        print("❌ ERROR:", response.status_code, response.text)
         return [None] * len(texts)
 
-# เตรียม batch ข้อมูล
+# --- เตรียมข้อมูลที่ต้องการ embedding ---
 texts = df["name"].tolist()
 ids = df["id"].tolist()
 metadatas = df.drop(columns=["name"]).to_dict(orient="records")
 
-# เรียก embeddings
-vectors = embed_text(texts)
+# --- เรียก embedding จาก API ---
+vectors = embed_text(texts, EMBEDDING_MODEL)
 
-# Insert ลง customer_vectors
+# --- Insert กลับเข้า TiDB ที่ตาราง customer_vectors ---
 with engine.connect() as conn:
     for _id, name, vector, metadata in zip(ids, texts, vectors, metadatas):
         if vector is None:
@@ -60,4 +67,4 @@ with engine.connect() as conn:
             (_id, name, vector_bytes, json.dumps(metadata))
         )
 
-print("✅ Embedding inserted into customer_vectors")
+print("✅ Done! Embeddings inserted into customer_vectors.")
