@@ -13,7 +13,7 @@ load_dotenv()
 
 # --- Config ---
 TIDB_URL = os.getenv("TIDB_URL")
-EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://209.15.123.47/embed")
+EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://209.15.123.47:11434/api/embeddings")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-base-en-v1.5")
 
 print("\n🔧 Environment Setup")
@@ -54,7 +54,7 @@ if df.empty:
 def embed_text(texts, model_name=None):
     url = EMBEDDING_API_URL
     headers = {"Content-Type": "application/json"}
-    payload = {"texts": texts, "truncate": True}
+    payload = {"input": texts}  # ตามรูปแบบของ nomic embed API
     if model_name:
         payload["model"] = model_name
 
@@ -64,7 +64,7 @@ def embed_text(texts, model_name=None):
         response.raise_for_status()
         data = response.json()
         print("✅ Embedding received")
-        return data.get("embeddings", [])
+        return data.get("data", [])
     except Exception as e:
         print("❌ Embedding API error:", e)
         return [None] * len(texts)
@@ -75,7 +75,10 @@ ids = df["id"].tolist()
 metadatas = df.drop(columns=["name"]).to_dict(orient="records")
 
 # --- Get embeddings ---
-vectors = embed_text(texts, EMBEDDING_MODEL)
+vectors_raw = embed_text(texts, EMBEDDING_MODEL)
+
+# --- Parse nomic format to raw vectors ---
+vectors = [item["embedding"] if item else None for item in vectors_raw]
 
 # --- Insert into customer_vectors ---
 print("\n💾 Inserting embeddings into customer_vectors...")
