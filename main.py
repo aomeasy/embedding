@@ -51,31 +51,31 @@ if df.empty:
 def embed_text(texts, model_name=None):
     url = EMBEDDING_API_URL
     headers = {"Content-Type": "application/json"}
-    payload = {
-        "input": texts
-    }
-    if model_name:
-        payload["model"] = model_name
+    results = []
 
-    try:
-        print(f"🚀 Sending request to {url} with model: {model_name}")
-        response = requests.post(url, headers=headers, json=payload)
-        print("🔁 Response:", response.status_code, response.text[:100])
-        response.raise_for_status()
+    print(f"🚀 Sending {len(texts)} texts to embedding API (one by one)...")
+    for text in texts:
+        payload = {
+            "input": text
+        }
+        if model_name:
+            payload["model"] = model_name
 
-        data = response.json()
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            print("🔁 Response:", response.status_code, response.text[:100])
+            response.raise_for_status()
+            data = response.json()
+            if "embedding" in data and isinstance(data["embedding"], list):
+                results.append(data["embedding"])
+            else:
+                results.append(None)
+        except Exception as e:
+            print(f"❌ Error embedding text: {text} ->", e)
+            results.append(None)
 
-        # Handle different response structures
-        if isinstance(data, dict) and "embedding" in data:
-            return data["embedding"]
-        elif isinstance(data, list):
-            return [item["embedding"] for item in data if item and "embedding" in item]
-        else:
-            return [None] * len(texts)
+    return results
 
-    except Exception as e:
-        print("❌ Embedding API error:", e)
-        return [None] * len(texts)
 
 # --- Prepare for insert ---
 texts = df["name"].tolist()
