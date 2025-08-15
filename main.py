@@ -48,33 +48,34 @@ if df.empty:
     exit(0)
 
 # --- Call embedding API ---
-def embed_text(texts, model_name=None):
+def embed_text(texts):
     url = EMBEDDING_API_URL
     headers = {"Content-Type": "application/json"}
-    results = []
 
-    print(f"🚀 Sending {len(texts)} texts to embedding API (one by one)...")
-    for text in texts:
+    embeddings = []
+    for t in texts:
         payload = {
-            "input": text
+            "text": t,          # ✅ ไม่ใช้ "texts"
+            "truncate": True
         }
-        if model_name:
-            payload["model"] = model_name
 
         try:
-            response = requests.post(url, headers=headers, json=payload)
-            print("🔁 Response:", response.status_code, response.text[:100])
-            response.raise_for_status()
-            data = response.json()
-            if "embedding" in data and isinstance(data["embedding"], list):
-                results.append(data["embedding"])
-            else:
-                results.append(None)
-        except Exception as e:
-            print(f"❌ Error embedding text: {text} ->", e)
-            results.append(None)
+            print(f"📨 Sending text: {t}")
+            res = requests.post(url, headers=headers, json=payload)
+            res.raise_for_status()
+            data = res.json()
 
-    return results
+            if "embedding" in data and isinstance(data["embedding"], list):
+                embeddings.append(data["embedding"])
+            else:
+                print(f"⚠️ Invalid response: {data}")
+                embeddings.append(None)
+
+        except Exception as e:
+            print(f"❌ Error while embedding text '{t}':", e)
+            embeddings.append(None)
+
+    return embeddings
 
 
 # --- Prepare for insert ---
