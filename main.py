@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 import requests
 import json
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import ArgumentError
 from dotenv import load_dotenv
 
 # โหลดค่าจาก .env
@@ -14,6 +15,16 @@ TIDB_URL = os.getenv("TIDB_URL")
 EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://209.15.123.47/embed")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-base-en-v1.5")  # optional
 
+try:
+    engine = create_engine(TIDB_URL)
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT 1"))
+        print("✅ Connected to TiDB:", result.scalar())
+except ArgumentError as e:
+    print("❌ Invalid TIDB_URL format:", e)
+except Exception as e:
+    print("❌ Other error:", e)
+    
 # --- Connect TiDB ---
 engine = create_engine(TIDB_URL)
 
