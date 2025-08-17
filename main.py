@@ -12,10 +12,11 @@ from datetime import date
 # โหลดค่าจาก .env
 load_dotenv()
 
-# --- Config ---
+# --- Config (แก้ไข URL และ Port) ---
 TIDB_URL = os.getenv("TIDB_URL")
-EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://209.15.123.47/embed")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "dengcao/Qwen3-Embedding-8B:Q4_K_M")
+# ✅ แก้ไข URL ให้ถูกต้องตามที่ทดสอบได้แล้ว
+EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://209.15.123.47:11434/api/embeddings")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text:latest")  # ✅ ใช้ model ที่ทดสอบแล้ว
 
 print("\n🔧 Environment Setup")
 print("🔎 Raw TIDB_URL =", repr(TIDB_URL))
@@ -54,53 +55,75 @@ if df.empty:
     print("⚠️ No data found. Skipping embedding.")
     exit(0)
 
-# --- Call embedding API (one-by-one for Qwen) ---
+# --- Call embedding API (แก้ไขให้ถูกต้อง) ---
 def embed_text(texts):
     embeddings = []
-    for t in texts:
+    for i, t in enumerate(texts):
         headers = {"Content-Type": "application/json"}
+        # ✅ แก้ไข payload ให้ถูกต้องตาม API ที่ทดสอบแล้ว
         payload = {
             "model": EMBEDDING_MODEL,
-            "prompt": t,
-            "stream": False
+            "prompt": str(t)  # ✅ ใช้ prompt แทน input และแปลงเป็น string
         }
         try:
-            print(f"🚀 Sending request to {EMBEDDING_API_URL} with model: {EMBEDDING_MODEL}")
-            response = requests.post(EMBEDDING_API_URL, headers=headers, json=payload)
-            print(f"🔁 Response: {response.status_code} {response.text}")
-            response.raise_for_status()
-            result = response.json()
-            if "embedding" in result:
-                embeddings.append(result["embedding"])
+            print(f"🚀 Processing {i+1}/{len(texts)}: '{t}' -> {EMBEDDING_API_URL}")
+            response = requests.post(EMBEDDING_API_URL, headers=headers, json=payload, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if "embedding" in result and result["embedding"]:
+                    embeddings.append(result["embedding"])
+                    print(f"✅ Got embedding with {len(result['embedding'])} dimensions")
+                else:
+                    print("⚠️ No embedding returned in response")
+                    embeddings.append(None)
             else:
-                print("⚠️ No embedding returned in response")
+                print(f"❌ API Error: {response.status_code} - {response.text}")
                 embeddings.append(None)
-        except Exception as e:
-            print("❌ Embedding API error:", e)
+                
+        except requests.exceptions.Timeout:
+            print("⏰ Request timeout")
             embeddings.append(None)
+        except Exception as e:
+            print(f"❌ Embedding API error: {e}")
+            embeddings.append(None)
+            
     return embeddings
-
 
 # --- Prepare data ---
 texts = df["name"].tolist()
 ids = df["id"].tolist()
-# 🔁 Convert all date fields to str in metadata
-df["signup_date"] = df["signup_date"].apply(lambda d: d.isoformat() if isinstance(d, date) else d)
-metadatas = df.drop(columns=["name"]).to_dict(orient="records")
+# ✅ แก้ไขการจัดการ date
+df_copy = df.copy()
+df_copy["signup_date"] = df_copy["signup_date"].apply(
+    lambda d: d.isoformat() if isinstance(d, (date, pd.Timestamp)) else str(d)
+)
+metadatas = df_copy.drop(columns=["name"]).to_dict(orient="records")
+
+print(f"\n🔄 Processing {len(texts)} customer names for embeddings...")
 
 # --- Get embeddings ---
 vectors = embed_text(texts)
 
-# --- Insert into customer_vectors ---
+# --- Insert into customer_vectors (แก้ไขการ insert) ---
 print("\n💾 Inserting embeddings into customer_vectors...")
 inserted = 0
-with engine.connect() as conn:
+failed = 0
+
+# ✅ ใช้ transaction เพื่อความปลอดภัย
+with engine.begin() as conn:  # ใช้ begin() แทน connect() เพื่อ auto-commit
     for _id, name, vector, metadata in zip(ids, texts, vectors, metadatas):
         if vector is None:
             print(f"⚠️ Skipped id={_id} due to missing vector")
+            failed += 1
             continue
+            
         try:
-            vector_bytes = np.array(vector, dtype=np.float32).tobytes()
+            # ✅ แปลง vector เป็น bytes อย่างถูกต้อง
+            vector_array = np.array(vector, dtype=np.float32)
+            vector_bytes = vector_array.tobytes()
+            
+            # ✅ แก้ไข SQL syntax สำหรับ MySQL/TiDB
             conn.execute(
                 text("""
                     INSERT INTO customer_vectors (id, name, embedding, metadata)
@@ -110,10 +133,40 @@ with engine.connect() as conn:
                       embedding = VALUES(embedding),
                       metadata = VALUES(metadata)
                 """),
-                {"id": _id, "name": name, "embedding": vector_bytes, "metadata": json.dumps(metadata)}
+                {
+                    "id": int(_id), 
+                    "name": str(name)[:100],  # ✅ ตัดชื่อให้ไม่เกิน 100 ตัวอักษร
+                    "embedding": vector_bytes, 
+                    "metadata": json.dumps(metadata, ensure_ascii=False)
+                }
             )
             inserted += 1
+            print(f"✅ Inserted id={_id}: '{name}' (vector dim: {len(vector)})")
+            
         except Exception as e:
-            print(f"❌ Insert failed for id={_id}:", e)
+            print(f"❌ Insert failed for id={_id}: {e}")
+            failed += 1
 
-print(f"\n✅ Done! {inserted} embeddings inserted into customer_vectors.")
+print(f"\n🎯 Summary:")
+print(f"✅ Successfully inserted: {inserted} embeddings")
+print(f"❌ Failed: {failed} records")
+print(f"📊 Total processed: {len(texts)} records")
+
+# --- Verify insertion ---
+print(f"\n🔍 Verifying data in customer_vectors table...")
+try:
+    with engine.connect() as conn:
+        count_result = conn.execute(text("SELECT COUNT(*) FROM customer_vectors"))
+        total_count = count_result.scalar()
+        print(f"📊 Total records in customer_vectors: {total_count}")
+        
+        # แสดงตัวอย่าง record แรก
+        sample_result = conn.execute(text("SELECT id, name, LENGTH(embedding) as embedding_size FROM customer_vectors LIMIT 3"))
+        print("\n📋 Sample records:")
+        for row in sample_result:
+            print(f"  ID: {row[0]}, Name: '{row[1]}', Embedding size: {row[2]} bytes")
+            
+except Exception as e:
+    print(f"❌ Verification failed: {e}")
+
+print("\n🎉 Process completed!")
