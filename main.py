@@ -14,8 +14,9 @@ import pymysql
 from dotenv import load_dotenv
 import os
 
-# โหลดค่าจาก .env
-load_dotenv()
+# โหลดค่าจาก environment variables (GitHub Secrets)
+# ไม่ต้องใช้ .env file เพราะใช้ GitHub Secrets
+# load_dotenv()  # Comment ออกเพราะใช้ GitHub Secrets
 
 # Configuration
 st.set_page_config(
