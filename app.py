@@ -10,6 +10,9 @@ from sqlalchemy.exc import SQLAlchemyError
 import pymysql
 import os
 import time
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+from sqlalchemy import event
+
 
 # Configuration
 st.set_page_config(
@@ -242,28 +245,57 @@ def _infer_sqlalchemy_type_from_series(s: pd.Series):
     except Exception:
         return String(255)
 
+def _ensure_mysql_utf8mb4(url: str) -> str:
+    """ถ้าเป็น mysql+pymysql://... แล้วไม่มี charset ให้เติม ?charset=utf8mb4"""
+    try:
+        if not url or "mysql" not in url:
+            return url
+        parts = urlsplit(url)
+        q = dict(parse_qsl(parts.query, keep_blank_values=True))
+        if "charset" not in q:
+            q["charset"] = "utf8mb4"
+        new_query = urlencode(q, doseq=True)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
+    except Exception:
+        return url
+
+
 class DatabaseManager:
     def __init__(self):
         self.engine = None
         self.connect_to_database()
     
     def connect_to_database(self):
-        """เชื่อมต่อกับ TiDB Database"""
-        try:
-            if not TIDB_URL:
-                st.error("❌ TIDB_URL ไม่ได้กำหนดใน environment variables")
-                return False
-            
-            self.engine = create_engine(TIDB_URL, pool_pre_ping=True, pool_recycle=300)
-            
-            # ทดสอบการเชื่อมต่อ
-            with self.engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
-            
-            return True
-        except Exception as e:
-            st.error(f"❌ ไม่สามารถเชื่อมต่อ Database ได้: {str(e)}")
+    """เชื่อมต่อกับ TiDB/MySQL ด้วย utf8mb4"""
+    try:
+        if not TIDB_URL:
+            st.error("❌ TIDB_URL ไม่ได้กำหนดใน environment variables")
             return False
+
+        tidb_url = _ensure_mysql_utf8mb4(TIDB_URL)
+
+        # บังคับ charset ฝั่ง driver ด้วย
+        self.engine = create_engine(
+            tidb_url,
+            pool_pre_ping=True,
+            pool_recycle=300,
+            connect_args={"charset": "utf8mb4", "use_unicode": True}
+        )
+
+        # บังคับ session ให้เป็น utf8mb4 เสมอ (กันเซิร์ฟเวอร์ตั้งค่าอื่น)
+        @event.listens_for(self.engine, "connect")
+        def _set_names_utf8mb4(dbapi_connection, connection_record):
+            with dbapi_connection.cursor() as cur:
+                cur.execute("SET NAMES utf8mb4")
+
+        # ทดสอบการเชื่อมต่อ
+        with self.engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception as e:
+        st.error(f"❌ ไม่สามารถเชื่อมต่อ Database ได้: {str(e)}")
+        return False
+
     
     def get_existing_tables(self):
         """ดึงรายชื่อ tables ที่มีอยู่ในระบบ"""
@@ -361,8 +393,16 @@ class DatabaseManager:
                 
                 table_columns.append(column)
             
-            table = Table(table_name, metadata, *table_columns)
-            metadata.create_all(self.engine)
+           table = Table(
+    table_name, metadata, *table_columns,
+    mysql_charset='utf8mb4', mysql_collate='utf8mb4_unicode_ci'
+)
+metadata.create_all(self.engine)
+
+# เผื่อเซิร์ฟเวอร์ไม่ใช้ collation นี้เป็นค่าเริ่ม
+with self.engine.begin() as conn:
+    conn.execute(text(f"ALTER TABLE {table_name} CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
+
             
             return True
         except Exception as e:
@@ -425,9 +465,15 @@ class DatabaseManager:
                     else:
                         columns.append(Column(safe_c, sa_type(), nullable=is_nullable))
 
-            table = Table(safe_table_name, metadata, *columns)
-            metadata.create_all(self.engine)
-            return True, safe_table_name, name_map
+           table = Table(
+    safe_table_name, metadata, *columns,
+    mysql_charset='utf8mb4', mysql_collate='utf8mb4_unicode_ci'
+)
+metadata.create_all(self.engine)
+with self.engine.begin() as conn:
+    conn.execute(text(f"ALTER TABLE {safe_table_name} CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
+return True, safe_table_name, name_map
+
         except Exception as e:
             st.error(f"❌ ไม่สามารถสร้าง table จาก CSV ได้: {str(e)}")
             return False, None, {}
