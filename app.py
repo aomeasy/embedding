@@ -164,6 +164,87 @@ class DatabaseManager:
     def __init__(self):
         self.engine = None
         self.connect_to_database()
+
+    def generate_csv_template(table_name, db_manager):
+    """สร้าง CSV template สำหรับ table ที่เลือก"""
+    try:
+        columns = db_manager.get_table_columns(table_name)
+        column_names = [col['name'] for col in columns if col['name'].lower() != 'id']
+        
+        # สร้าง sample data
+        sample_data = {}
+        for col in columns:
+            if col['name'].lower() == 'id':
+                continue
+            col_name = col['name']
+            col_type = str(col['type']).lower()
+            
+            if 'varchar' in col_type or 'text' in col_type:
+                sample_data[col_name] = f"ตัวอย่าง{col_name}"
+            elif 'int' in col_type:
+                sample_data[col_name] = 123
+            elif 'float' in col_type or 'decimal' in col_type:
+                sample_data[col_name] = 123.45
+            elif 'date' in col_type or 'timestamp' in col_type:
+                sample_data[col_name] = "2024-01-01"
+            else:
+                sample_data[col_name] = f"ตัวอย่าง{col_name}"
+        
+        # สร้าง DataFrame template
+        template_df = pd.DataFrame([sample_data])
+        return template_df, column_names
+    
+    except Exception as e:
+        st.error(f"ไม่สามารถสร้าง template ได้: {str(e)}")
+        return None, None
+
+def check_api_status():
+    """ตรวจสอบสถานะ API และ Server"""
+    status = {
+        'database': {'status': False, 'message': '', 'color': 'red'},
+        'embedding_api': {'status': False, 'message': '', 'color': 'red'}
+    }
+    
+    # ตรวจสอบ Database
+    try:
+        if st.session_state.db_manager and st.session_state.db_manager.engine:
+            with st.session_state.db_manager.engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            status['database']['status'] = True
+            status['database']['message'] = "เชื่อมต่อสำเร็จ"
+            status['database']['color'] = 'green'
+        else:
+            status['database']['message'] = "ไม่ได้เชื่อมต่อ"
+    except Exception as e:
+        status['database']['message'] = f"ข้อผิดพลาด: {str(e)[:30]}..."
+    
+    # ตรวจสอบ Embedding API
+    try:
+        import requests
+        test_payload = {
+            "model": EMBEDDING_MODEL,
+            "prompt": "test"
+        }
+        response = requests.post(EMBEDDING_API_URL, json=test_payload, timeout=5)
+        if response.status_code == 200:
+            result = response.json()
+            if "embedding" in result:
+                status['embedding_api']['status'] = True
+                status['embedding_api']['message'] = "API พร้อมใช้งาน"
+                status['embedding_api']['color'] = 'green'
+            else:
+                status['embedding_api']['message'] = "API ตอบสนองผิดปกติ"
+        else:
+            status['embedding_api']['message'] = f"HTTP {response.status_code}"
+    except requests.exceptions.Timeout:
+        status['embedding_api']['message'] = "API Timeout"
+    except requests.exceptions.ConnectionError:
+        status['embedding_api']['message'] = "ไม่สามารถเชื่อมต่อ"
+    except Exception as e:
+        status['embedding_api']['message'] = f"ข้อผิดพลาด: {str(e)[:20]}..."
+    
+    return status
+
     
     def connect_to_database(self):
         """เชื่อมต่อกับ TiDB Database"""
@@ -425,7 +506,7 @@ def show_select_table_interface():
         """, unsafe_allow_html=True)
 
 def show_upload_csv_interface():
-    """แสดง interface สำหรับ upload CSV"""
+    """แสดง interface สำหรับ upload CSV พร้อม template"""
     st.markdown("""
     <div class="info-box">
         <h3>📁 Upload CSV File</h3>
@@ -439,7 +520,39 @@ def show_upload_csv_interface():
     if tables:
         target_table = st.selectbox("🎯 เลือก Target Table:", options=tables)
         
-        # Upload file
+        if target_table:
+            # แสดงส่วน Template Download
+            st.markdown("### 📋 ดาวน์โหลด CSV Template")
+            
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.info("💡 ดาวน์โหลด template CSV เพื่อให้แน่ใจว่าข้อมูลตรงตามโครงสร้าง table")
+            
+            with col2:
+                if st.button("📥 ดาวน์โหลด Template", type="secondary"):
+                    template_df, column_names = generate_csv_template(target_table, st.session_state.db_manager)
+                    
+                    if template_df is not None:
+                        # แปลง DataFrame เป็น CSV
+                        csv_data = template_df.to_csv(index=False, encoding='utf-8-sig')
+                        
+                        st.download_button(
+                            label="💾 บันทึกไฟล์ Template",
+                            data=csv_data,
+                            file_name=f"{target_table}_template.csv",
+                            mime="text/csv",
+                            key=f"download_{target_table}"
+                        )
+                        
+                        st.success("✅ Template พร้อมดาวน์โหลด!")
+                        
+                        # แสดง preview template
+                        st.markdown("#### 👁️ ตัวอย่าง Template:")
+                        st.dataframe(template_df, use_container_width=True)
+            
+            st.markdown("---")
+        
+        # Upload file section (ส่วนเดิม)
         uploaded_file = st.file_uploader("📤 เลือกไฟล์ CSV", type=['csv'])
         
         if uploaded_file and target_table:
@@ -450,7 +563,7 @@ def show_upload_csv_interface():
                 st.markdown(f"### 📊 ข้อมูลใน CSV ({len(df)} แถว)")
                 st.dataframe(df.head(10), use_container_width=True)
                 
-                # ตรวจสอบ columns
+                # ตรวจสอบ columns (ส่วนเดิม)
                 table_columns = st.session_state.db_manager.get_table_columns(target_table)
                 table_column_names = [col['name'] for col in table_columns]
                 
@@ -481,7 +594,7 @@ def show_upload_csv_interface():
                 if extra_columns:
                     st.info(f"Columns เพิ่มเติมใน CSV: {', '.join(extra_columns)}")
                 
-                # ปุ่ม import
+                # ปุ่ม import (ส่วนเดิม)
                 if st.button("🚀 Import ข้อมูล", type="primary"):
                     with st.spinner("กำลัง import ข้อมูล..."):
                         success_count, error_count, errors = st.session_state.db_manager.insert_data_from_csv(
@@ -779,35 +892,88 @@ def main():
         return
     
     # Sidebar menu
-    with st.sidebar:
-        st.markdown("""
-        <div style="text-align: center; padding: 2rem 1rem 1rem; margin-bottom: 1rem; border-bottom: 1px solid rgba(59, 130, 246, 0.2);">
-            <h1 style="background: linear-gradient(45deg, #3b82f6, #06b6d4, #0ea5e9); background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 1.5rem; font-weight: 800; margin: 0;">🚀 NTOneEmbedding</h1>
-            <p style="color: rgba(255, 255, 255, 0.7); font-size: 0.8rem; margin: 0.5rem 0 0 0;">AI/ML Data Management System</p>
+    # Sidebar menu
+with st.sidebar:
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem 1rem 1rem; margin-bottom: 1rem; border-bottom: 1px solid rgba(59, 130, 246, 0.2);">
+        <h1 style="background: linear-gradient(45deg, #3b82f6, #06b6d4, #0ea5e9); background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 1.5rem; font-weight: 800; margin: 0;">🚀 NTOneEmbedding</h1>
+        <p style="color: rgba(255, 255, 255, 0.7); font-size: 0.8rem; margin: 0.5rem 0 0 0;">AI/ML Data Management System</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    menu_option = st.radio(
+        "เลือกเมนู:",
+        ["🆕 สร้าง Table ใหม่", "📋 เลือก Table ที่มีอยู่", "📁 Upload CSV File", "🤖 Run Embedding Process"]
+    )
+    
+    # System Status - เพิ่มการแสดงสถานะ API
+    st.markdown("---")
+    st.markdown("### 📊 สถานะระบบ")
+    
+    # ตรวจสอบสถานะ API
+    api_status = check_api_status()
+    
+    # แสดงสถานะ Database
+    if api_status['database']['status']:
+        st.markdown(f"""
+        <div style="display: flex; align-items: center; padding: 0.5rem; background: linear-gradient(135deg, #065f46, #047857); border-radius: 8px; margin-bottom: 0.5rem;">
+            <span style="color: #10b981; margin-right: 0.5rem;">●</span>
+            <div>
+                <div style="color: #d1fae5; font-weight: 600; font-size: 0.9rem;">Database</div>
+                <div style="color: #a7f3d0; font-size: 0.8rem;">{api_status['database']['message']}</div>
+            </div>
         </div>
         """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style="display: flex; align-items: center; padding: 0.5rem; background: linear-gradient(135deg, #7f1d1d, #991b1b); border-radius: 8px; margin-bottom: 0.5rem;">
+            <span style="color: #ef4444; margin-right: 0.5rem;">●</span>
+            <div>
+                <div style="color: #fecaca; font-weight: 600; font-size: 0.9rem;">Database</div>
+                <div style="color: #fca5a5; font-size: 0.8rem;">{api_status['database']['message']}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # แสดงสถานะ Embedding API
+    if api_status['embedding_api']['status']:
+        st.markdown(f"""
+        <div style="display: flex; align-items: center; padding: 0.5rem; background: linear-gradient(135deg, #065f46, #047857); border-radius: 8px; margin-bottom: 0.5rem;">
+            <span style="color: #10b981; margin-right: 0.5rem;">●</span>
+            <div>
+                <div style="color: #d1fae5; font-weight: 600; font-size: 0.9rem;">Embedding API</div>
+                <div style="color: #a7f3d0; font-size: 0.8rem;">{api_status['embedding_api']['message']}</div>
+                <div style="color: #6ee7b7; font-size: 0.7rem;">Model: {EMBEDDING_MODEL}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style="display: flex; align-items: center; padding: 0.5rem; background: linear-gradient(135deg, #7f1d1d, #991b1b); border-radius: 8px; margin-bottom: 0.5rem;">
+            <span style="color: #ef4444; margin-right: 0.5rem;">●</span>
+            <div>
+                <div style="color: #fecaca; font-weight: 600; font-size: 0.9rem;">Embedding API</div>
+                <div style="color: #fca5a5; font-size: 0.8rem;">{api_status['embedding_api']['message']}</div>
+                <div style="color: #f87171; font-size: 0.7rem;">Server: {EMBEDDING_API_URL}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # แสดงข้อมูลเพิ่มเติม
+    st.markdown("---")
+    st.markdown("### 📈 ข้อมูลระบบ")
+    
+    # แสดงจำนวน tables
+    try:
+        tables = st.session_state.db_manager.get_existing_tables()
+        st.metric("📋 Tables ทั้งหมด", len(tables))
         
-        menu_option = st.radio(
-            "เลือกเมนู:",
-            ["🆕 สร้าง Table ใหม่", "📋 เลือก Table ที่มีอยู่", "📁 Upload CSV File", "🤖 Run Embedding Process"]
-        )
-        
-        # System Status
-        st.markdown("---")
-        st.markdown("### 📊 สถานะระบบ")
-        
-        # แสดงสถานะการเชื่อมต่อ
-        if st.session_state.db_manager.engine:
-            st.success("✅ Database เชื่อมต่อแล้ว")
-        else:
-            st.error("❌ Database ยังไม่เชื่อมต่อ")
-        
-        # แสดงจำนวน tables
-        try:
-            tables = st.session_state.db_manager.get_existing_tables()
-            st.metric("📋 Tables ทั้งหมด", len(tables))
-        except:
-            st.metric("📋 Tables ทั้งหมด", "N/A")
+        # แสดงจำนวน embedding tables
+        embedding_tables = [t for t in tables if t.endswith('_vectors')]
+        st.metric("🤖 Embedding Tables", len(embedding_tables))
+    except:
+        st.metric("📋 Tables ทั้งหมด", "N/A")
+        st.metric("🤖 Embedding Tables", "N/A")
     
     # Main content
     if menu_option == "🆕 สร้าง Table ใหม่":
