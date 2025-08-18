@@ -27,14 +27,14 @@ try:
     EMBEDDING_MODEL = st.secrets.get("EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL", "nomic-embed-text:latest")
     # เพิ่ม API URL สำหรับ chat/generation
     CHAT_API_URL = st.secrets.get("CHAT_API_URL") or os.environ.get("CHAT_API_URL", "http://209.15.123.47:11434/api/generate")
-    CHAT_MODEL = st.secrets.get("CHAT_MODEL") or os.environ.get("CHAT_MODEL", "llama3.1:latest")
+    CHAT_MODEL = st.secrets.get("CHAT_MODEL") or os.environ.get("CHAT_MODEL", "Qwen3:14b")
 except:
     # Fallback สำหรับการรันใน local
     TIDB_URL = os.environ.get("TIDB_URL")
     EMBEDDING_API_URL = os.environ.get("EMBEDDING_API_URL", "http://209.15.123.47:11434/api/embeddings")
     EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text:latest")
     CHAT_API_URL = os.environ.get("CHAT_API_URL", "http://209.15.123.47:11434/api/generate")
-    CHAT_MODEL = os.environ.get("CHAT_MODEL", "llama3.1:latest")
+    CHAT_MODEL = os.environ.get("CHAT_MODEL", "Qwen3:14b")
 
 # Modern CSS with Enhanced Sidebar and Dark/Neon Theme (เหมือนเดิม)
 st.markdown("""
