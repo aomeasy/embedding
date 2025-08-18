@@ -16,7 +16,7 @@ import os
 
 # Configuration
 st.set_page_config(
-    page_title="ระบบ Embedding SQL Database",
+    page_title="NTOneEmbedding - ระบบ Embedding SQL Database",
     page_icon="🗂️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -93,6 +93,73 @@ st.markdown("""
         text-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
         position: relative;
         z-index: 2;
+    }
+    
+    /* Modern Sidebar */
+    .css-1d391kg, .css-1rs6os {
+        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%) !important;
+        border-right: 2px solid rgba(59, 130, 246, 0.3);
+    }
+    
+    .sidebar-header {
+        background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #06b6d4 100%);
+        color: #ffffff;
+        padding: 1.5rem 1rem;
+        border-radius: 16px;
+        margin: 1rem 0 2rem 0;
+        font-weight: 600;
+        font-size: 1.2rem;
+        text-align: center;
+        text-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+        box-shadow: 0 8px 25px rgba(59, 130, 246, 0.25);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+    
+    .menu-item {
+        background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+        border: 1px solid rgba(71, 85, 105, 0.5);
+        border-radius: 12px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        color: #e1e5f1;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    
+    .menu-item:hover {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        border-color: #3b82f6;
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3);
+    }
+    
+    .menu-item.active {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        border-color: #60a5fa;
+        box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+    }
+    
+    .menu-icon {
+        font-size: 1.5rem;
+        width: 2rem;
+        text-align: center;
+    }
+    
+    .menu-text {
+        font-weight: 500;
+        flex: 1;
+    }
+    
+    .menu-badge {
+        background: linear-gradient(135deg, #f59e0b, #d97706);
+        color: white;
+        font-size: 0.75rem;
+        padding: 0.25rem 0.5rem;
+        border-radius: 8px;
+        font-weight: 600;
     }
     
     /* Success Box */
@@ -208,16 +275,6 @@ st.markdown("""
         border: 1px solid rgba(59, 130, 246, 0.3);
     }
     
-    /* Sidebar */
-    .css-1d391kg, .css-1rs6os {
-        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%) !important;
-        border-right: 1px solid #334155;
-    }
-    
-    .css-1d391kg .css-10trblm {
-        color: #e1e5f1;
-    }
-    
     /* Buttons */
     .stButton > button {
         background: linear-gradient(135deg, #3b82f6 0%, #2563eb 50%, #1d4ed8 100%);
@@ -274,24 +331,6 @@ st.markdown("""
         color: #64748b !important;
     }
     
-    /* Checkbox */
-    .stCheckbox > label {
-        color: #e1e5f1 !important;
-    }
-    
-    /* Radio */
-    .stRadio > label {
-        color: #e1e5f1 !important;
-    }
-    
-    /* DataFrame */
-    .stDataFrame {
-        border-radius: 16px !important;
-        overflow: hidden !important;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(71, 85, 105, 0.3) !important;
-        border: 1px solid #334155 !important;
-    }
-    
     /* Progress */
     .stProgress > div > div {
         background: linear-gradient(90deg, #3b82f6 0%, #06b6d4 50%, #0ea5e9 100%) !important;
@@ -308,6 +347,26 @@ st.markdown("""
         margin: 1rem 0;
     }
     
+    /* Radio buttons - Modern style */
+    .stRadio > label {
+        color: #e1e5f1 !important;
+        display: none !important;
+    }
+    
+    .stRadio > div {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    /* DataFrame */
+    .stDataFrame {
+        border-radius: 16px !important;
+        overflow: hidden !important;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(71, 85, 105, 0.3) !important;
+        border: 1px solid #334155 !important;
+    }
+    
     /* File Uploader */
     .stFileUploader > div > div {
         background: #1e293b !important;
@@ -318,21 +377,6 @@ st.markdown("""
     
     .stFileUploader > div > div:hover {
         border-color: #3b82f6 !important;
-    }
-    
-    /* Expander */
-    .streamlit-expanderHeader {
-        background: #1e293b !important;
-        color: #e1e5f1 !important;
-        border-radius: 12px !important;
-        border: 1px solid #334155 !important;
-    }
-    
-    .streamlit-expanderContent {
-        background: #0f172a !important;
-        border: 1px solid #334155 !important;
-        border-top: none !important;
-        border-radius: 0 0 12px 12px !important;
     }
     
     /* Custom scrollbar */
@@ -419,21 +463,45 @@ class DatabaseManager:
             st.error(f"❌ ไม่สามารถดึง columns ของ table {table_name} ได้: {str(e)}")
             return []
     
+    def get_table_data_safely(self, table_name, limit=None):
+        """ดึงข้อมูลจาก table อย่างปลอดภัย พร้อมการจัดการ timeout"""
+        try:
+            # สร้าง connection พร้อม timeout
+            with self.engine.connect() as conn:
+                # ตั้ง timeout สำหรับ query
+                conn.execute(text("SET SESSION innodb_lock_wait_timeout = 5"))
+                
+                # สร้าง query
+                query = f"SELECT * FROM `{table_name}`"
+                if limit:
+                    query += f" LIMIT {limit}"
+                
+                # Execute query พร้อม pandas
+                df = pd.read_sql(query, con=conn)
+                return df, None
+                
+        except Exception as e:
+            error_msg = str(e)
+            st.error(f"❌ ไม่สามารถดึงข้อมูลจาก table {table_name}: {error_msg}")
+            return None, error_msg
+    
     def check_embedded_records(self, table_name):
         """ตรวจสอบว่า record ไหน embedded แล้ว"""
         try:
+            embedding_table_name = f"{table_name}_vectors"
+            
             with self.engine.connect() as conn:
-                # ตรวจสอบว่ามี customer_vectors table หรือไม่
-                result = conn.execute(text("SHOW TABLES LIKE 'customer_vectors'"))
+                # ตรวจสอบว่ามี embedding table หรือไม่
+                result = conn.execute(text(f"SHOW TABLES LIKE '{embedding_table_name}'"))
                 if not result.fetchone():
                     return set(), 0
                 
                 # ดึง IDs ที่ embed แล้ว
-                embedded_result = conn.execute(text("SELECT id FROM customer_vectors"))
+                embedded_result = conn.execute(text(f"SELECT id FROM `{embedding_table_name}`"))
                 embedded_ids = set(row[0] for row in embedded_result.fetchall())
                 
                 # นับจำนวนรวม
-                total_result = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}"))
+                total_result = conn.execute(text(f"SELECT COUNT(*) FROM `{table_name}`"))
                 total_count = total_result.scalar()
                 
                 return embedded_ids, total_count
@@ -489,7 +557,7 @@ class DatabaseManager:
             
             with self.engine.connect() as conn:
                 conn.execute(text(f"""
-                    CREATE TABLE IF NOT EXISTS {embedding_table_name} (
+                    CREATE TABLE IF NOT EXISTS `{embedding_table_name}` (
                         id INT PRIMARY KEY,
                         name VARCHAR(255),
                         embedding LONGBLOB,
@@ -530,10 +598,10 @@ class DatabaseManager:
                                 row_dict[key] = None
                         
                         # สร้าง SQL insert statement (ไม่รวม id เพราะเป็น AUTO_INCREMENT)
-                        columns = ', '.join(row_dict.keys())
+                        columns = ', '.join([f'`{key}`' for key in row_dict.keys()])
                         placeholders = ', '.join([f':{key}' for key in row_dict.keys()])
                         
-                        sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+                        sql = f"INSERT INTO `{table_name}` ({columns}) VALUES ({placeholders})"
                         conn.execute(text(sql), row_dict)
                         
                         success_count += 1
@@ -557,12 +625,69 @@ class DatabaseManager:
             st.error(f"❌ ไม่สามารถเพิ่มข้อมูลได้: {str(e)}")
             return 0, len(df), [str(e)]
 
+def create_modern_sidebar():
+    """สร้าง modern sidebar menu"""
+    with st.sidebar:
+        st.markdown("""
+        <div class="sidebar-header">
+            🗂️ NTOneEmbedding
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Menu items
+        menu_items = [
+            {"key": "create_table", "icon": "🆕", "title": "สร้าง Table", "desc": "สร้างตารางใหม่"},
+            {"key": "view_table", "icon": "📋", "title": "ดู Tables", "desc": "จัดการตารางที่มี"},
+            {"key": "upload_csv", "icon": "📁", "title": "Import CSV", "desc": "นำเข้าข้อมูล"},
+            {"key": "run_embedding", "icon": "🤖", "title": "Embedding", "desc": "สร้าง Vectors", "badge": "AI"}
+        ]
+        
+        selected_menu = None
+        
+        for item in menu_items:
+            # Create clickable menu item
+            container = st.container()
+            
+            # Check if this item is selected
+            is_active = st.session_state.get('selected_menu', 'create_table') == item['key']
+            
+            with container:
+                if st.button(
+                    f"{item['icon']} {item['title']}", 
+                    key=f"menu_{item['key']}", 
+                    help=item['desc'],
+                    use_container_width=True
+                ):
+                    st.session_state.selected_menu = item['key']
+                    st.rerun()
+        
+        # System status
+        st.markdown("---")
+        st.markdown("### 📊 สถานะระบบ")
+        
+        # Database connection status
+        if 'db_manager' in st.session_state and st.session_state.db_manager.engine:
+            st.success("🟢 Database เชื่อมต่อแล้ว")
+        else:
+            st.error("🔴 Database ไม่เชื่อมต่อ")
+        
+        # Environment check
+        if os.getenv("TIDB_URL"):
+            st.success("🟢 TIDB_URL กำหนดแล้ว")
+        else:
+            st.error("🔴 TIDB_URL ไม่ได้กำหนด")
+            
+        if os.getenv("EMBEDDING_API_URL"):
+            st.success("🟢 Embedding API พร้อม")
+        else:
+            st.warning("🟡 ใช้ Embedding API ดีฟอลต์")
+
 def main():
     # Header
     st.markdown("""
     <div class="main-header">
-        <h1>🗂️ ระบบ Embedding SQL Database</h1>
-        <p>จัดการ Tables, Import ข้อมูล CSV และสร้าง Vector Embeddings</p>
+        <h1>🗂️ NTOneEmbedding</h1>
+        <p>ระบบจัดการ SQL Database และ Vector Embeddings แบบครบวงจร</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -579,21 +704,23 @@ def main():
         """, unsafe_allow_html=True)
         return
     
-    # Sidebar menu
-    st.sidebar.markdown('<div class="section-header">📋 เมนูหลัก</div>', unsafe_allow_html=True)
-    menu_option = st.sidebar.radio(
-        "เลือกการดำเนินการ:",
-        ["🆕 สร้าง Table ใหม่", "📋 เลือก Table ที่มีอยู่", "📁 Upload CSV File", "🤖 Run Embedding Process"],
-        label_visibility="collapsed"
-    )
+    # Initialize selected menu
+    if 'selected_menu' not in st.session_state:
+        st.session_state.selected_menu = 'create_table'
     
-    if menu_option == "🆕 สร้าง Table ใหม่":
+    # Create modern sidebar
+    create_modern_sidebar()
+    
+    # Main content based on selected menu
+    selected_menu = st.session_state.get('selected_menu', 'create_table')
+    
+    if selected_menu == 'create_table':
         show_create_table_interface()
-    elif menu_option == "📋 เลือก Table ที่มีอยู่":
+    elif selected_menu == 'view_table':
         show_select_table_interface()
-    elif menu_option == "📁 Upload CSV File":
+    elif selected_menu == 'upload_csv':
         show_upload_csv_interface()
-    elif menu_option == "🤖 Run Embedding Process":
+    elif selected_menu == 'run_embedding':
         show_embedding_interface()
 
 def show_create_table_interface():
@@ -697,7 +824,7 @@ def show_create_table_interface():
 
 def show_select_table_interface():
     """แสดง interface สำหรับเลือก table ที่มีอยู่"""
-    st.markdown('<div class="section-header">📋 เลือก Table ที่มีอยู่</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">📋 จัดการ Tables ที่มีอยู่</div>', unsafe_allow_html=True)
     
     # ดึงรายชื่อ tables
     tables = st.session_state.db_manager.get_existing_tables()
@@ -764,31 +891,31 @@ def show_select_table_interface():
             st.dataframe(df_cols, use_container_width=True, hide_index=True)
             
             # แสดงข้อมูลในตาราง (ตัวอย่าง 10 แถวแรก)
-            try:
-                with st.session_state.db_manager.engine.connect() as conn:
-                    result = conn.execute(text(f"SELECT * FROM {selected_table} LIMIT 10"))
-                    data = result.fetchall()
-                    column_names = result.keys()
-                    
-                st.markdown(f'<div class="section-header">👀 ตัวอย่างข้อมูล</div>', unsafe_allow_html=True)
-                
-                if data:
-                    df_preview = pd.DataFrame(data, columns=column_names)
-                    st.dataframe(df_preview, use_container_width=True, hide_index=True)
-                else:
-                    st.markdown("""
-                    <div class="info-box">
-                        <h4>📭 Table ว่าง</h4>
-                        <p>ไม่มีข้อมูลในตารางนี้ กรุณา import ข้อมูลก่อน</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-            except Exception as e:
-                st.error(f"❌ ไม่สามารถดึงข้อมูลได้: {str(e)}")
+            st.markdown(f'<div class="section-header">👀 ตัวอย่างข้อมูล</div>', unsafe_allow_html=True)
+            
+            # ใช้ฟังก์ชันใหม่ที่ปลอดภัยกว่า
+            df_preview, error = st.session_state.db_manager.get_table_data_safely(selected_table, limit=10)
+            
+            if df_preview is not None and not df_preview.empty:
+                st.dataframe(df_preview, use_container_width=True, hide_index=True)
+            elif error:
+                st.markdown(f"""
+                <div class="error-box">
+                    <h4>❌ ไม่สามารถดึงข้อมูลได้</h4>
+                    <p>{error}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div class="info-box">
+                    <h4>📭 Table ว่าง</h4>
+                    <p>ไม่มีข้อมูลในตารางนี้ กรุณา import ข้อมูลก่อน</p>
+                </div>
+                """, unsafe_allow_html=True)
 
 def show_upload_csv_interface():
     """แสดง interface สำหรับ upload CSV file"""
-    st.markdown('<div class="section-header">📁 Upload CSV File</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">📁 Import ข้อมูลจากไฟล์ CSV</div>', unsafe_allow_html=True)
     
     # เลือก table
     tables = st.session_state.db_manager.get_existing_tables()
@@ -978,7 +1105,7 @@ def show_upload_csv_interface():
 
 def show_embedding_interface():
     """แสดง interface สำหรับรัน embedding process"""
-    st.markdown('<div class="section-header">🤖 Run Embedding Process</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">🤖 สร้าง Vector Embeddings</div>', unsafe_allow_html=True)
     
     st.markdown("""
     <div class="info-box">
@@ -1010,39 +1137,43 @@ def show_embedding_interface():
     if selected_table:
         # ตรวจสอบข้อมูลในตาราง
         try:
-            with st.session_state.db_manager.engine.connect() as conn:
-                count_result = conn.execute(text(f"SELECT COUNT(*) FROM {selected_table}"))
-                total_count = count_result.scalar()
-                
-                if total_count == 0:
-                    st.markdown("""
-                    <div class="error-box">
-                        <h4>❌ Table ว่าง</h4>
-                        <p>ไม่มีข้อมูลใน table ที่เลือก กรุณา import ข้อมูลก่อน</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    return
-                
-                # ตรวจสอบว่ามี name column หรือไม่
-                columns = st.session_state.db_manager.get_table_columns(selected_table)
-                column_names = [col['name'] for col in columns]
-                
-                if 'name' not in column_names:
-                    st.markdown(f"""
-                    <div class="error-box">
-                        <h4>❌ ไม่พบ 'name' Column</h4>
-                        <p>Table ที่เลือกต้องมี column ชื่อ 'name' สำหรับการสร้าง embedding</p>
-                        <p>Columns ที่มี: {', '.join(column_names)}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    return
+            df_check, error = st.session_state.db_manager.get_table_data_safely(selected_table, limit=1)
+            
+            if error or df_check is None:
+                st.markdown(f"""
+                <div class="error-box">
+                    <h4>❌ ไม่สามารถเข้าถึง Table ได้</h4>
+                    <p>เกิดข้อผิดพลาด: {error or 'ไม่สามารถดึงข้อมูลได้'}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                return
+            
+            if df_check.empty:
+                st.markdown("""
+                <div class="error-box">
+                    <h4>❌ Table ว่าง</h4>
+                    <p>ไม่มีข้อมูลใน table ที่เลือก กรุณา import ข้อมูลก่อน</p>
+                </div>
+                """, unsafe_allow_html=True)
+                return
+            
+            # ตรวจสอบว่ามี name column หรือไม่
+            if 'name' not in df_check.columns:
+                st.markdown(f"""
+                <div class="error-box">
+                    <h4>❌ ไม่พบ 'name' Column</h4>
+                    <p>Table ที่เลือกต้องมี column ชื่อ 'name' สำหรับการสร้าง embedding</p>
+                    <p>Columns ที่มี: {', '.join(df_check.columns.tolist())}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                return
         
         except Exception as e:
             st.error(f"❌ ไม่สามารถตรวจสอบข้อมูลได้: {str(e)}")
             return
         
         # ตรวจสอบ embedding status
-        embedded_ids, _ = st.session_state.db_manager.check_embedded_records(selected_table)
+        embedded_ids, total_count = st.session_state.db_manager.check_embedded_records(selected_table)
         remaining_count = total_count - len(embedded_ids)
         
         # แสดงการตั้งค่าปัจจุบัน
@@ -1127,7 +1258,7 @@ def show_embedding_interface():
                 run_embedding_process(selected_table, embedded_ids)
 
 def run_embedding_process(table_name, existing_embedded_ids):
-    """รันกระบวนการ embedding โดยตรวจสอบข้อมูลที่ embed แล้ว"""
+    """รันกระบวนการ embedding โดยตรวจสอบข้อมูลที่ embed แล้ว - ปรับปรุงแก้ไขปัญหาค้าง"""
     
     progress_container = st.container()
     
@@ -1139,7 +1270,7 @@ def run_embedding_process(table_name, existing_embedded_ids):
     
     try:
         status_text.text("🔄 กำลังเริ่มต้น Embedding Process...")
-        progress_bar.progress(10)
+        progress_bar.progress(5)
         
         # ตรวจสอบการตั้งค่า
         tidb_url = os.getenv("TIDB_URL")
@@ -1156,32 +1287,80 @@ def run_embedding_process(table_name, existing_embedded_ids):
             return
         
         status_text.text("📡 ตรวจสอบการเชื่อมต่อ...")
-        progress_bar.progress(20)
+        progress_bar.progress(10)
         
         # เชื่อมต่อ database
         engine = st.session_state.db_manager.engine
         
         status_text.text(f"📥 ดึงข้อมูลจาก {table_name} table...")
+        progress_bar.progress(15)
+        
+        # ใช้วิธีการดึงข้อมูลที่ปลอดภัยกว่า พร้อม timeout และ error handling
+        try:
+            with engine.connect() as conn:
+                # ตั้ง timeout สำหรับ session
+                conn.execute(text("SET SESSION wait_timeout = 30"))
+                conn.execute(text("SET SESSION interactive_timeout = 30"))
+                
+                # ดึง columns ที่มีอยู่จริง
+                columns_query = text(f"SHOW COLUMNS FROM `{table_name}`")
+                columns_result = conn.execute(columns_query)
+                available_columns = [row[0] for row in columns_result.fetchall()]
+                
+                status_text.text(f"📊 ตรวจสอบ columns: {', '.join(available_columns[:5])}...")
+                progress_bar.progress(20)
+                
+                # ตรวจสอบ columns ที่จำเป็น
+                if 'name' not in available_columns:
+                    st.error("❌ ไม่พพบ 'name' column ใน table")
+                    return
+                
+                # สร้าง SELECT statement ที่ปลอดภัย
+                base_columns = ['id', 'name']
+                optional_columns = ['email', 'age', 'city', 'signup_date']
+                select_columns = [col for col in base_columns + optional_columns if col in available_columns]
+                
+                # สร้าง WHERE clause สำหรับข้อมูลที่ยังไม่ได้ embed
+                where_clause = ""
+                if existing_embedded_ids:
+                    # แบ่งการ query เพื่อป้องกัน SQL injection และ performance issues
+                    ids_list = list(existing_embedded_ids)
+                    if len(ids_list) > 1000:  # ถ้ามี embedded IDs เยอะมาก ให้ดึงทีละส่วน
+                        where_clause = f"WHERE id > {max(ids_list)}"
+                    else:
+                        ids_str = ','.join(str(id_val) for id_val in ids_list[:1000])
+                        where_clause = f"WHERE id NOT IN ({ids_str})"
+                
+                select_sql = f"SELECT {', '.join(f'`{col}`' for col in select_columns)} FROM `{table_name}` {where_clause} LIMIT 1000"
+                
+                status_text.text("📊 กำลังดึงข้อมูลจาก database...")
+                progress_bar.progress(25)
+                
+                # Execute query with timeout
+                result = conn.execute(text(select_sql))
+                rows = result.fetchall()
+                column_names = result.keys()
+                
+                if not rows:
+                    st.markdown("""
+                    <div class="info-box">
+                        <h4>⚠️ ไม่มีข้อมูลใหม่</h4>
+                        <p>ข้อมูลทั้งหมดถูก embed แล้ว หรือไม่พบข้อมูลใหม่</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    return
+                
+                # สร้าง DataFrame
+                df_to_process = pd.DataFrame(rows, columns=column_names)
+                
+        except Exception as e:
+            st.error(f"❌ ไม่สามารถดึงข้อมูลได้: {str(e)}")
+            return
+        
+        status_text.text(f"✅ พบข้อมูลใหม่ {len(df_to_process):,} รายการ")
         progress_bar.progress(30)
         
-        # ดึงข้อมูลเฉพาะที่ยังไม่ได้ embed
-        columns = st.session_state.db_manager.get_table_columns(table_name)
-        column_names = [col['name'] for col in columns]
-        
-        # สร้าง SELECT statement ตาม columns ที่มี
-        base_columns = ['id', 'name']
-        optional_columns = ['email', 'age', 'city', 'signup_date']
-        available_columns = [col for col in base_columns + optional_columns if col in column_names]
-        
-        select_sql = f"SELECT {', '.join(available_columns)} FROM {table_name}"
-        
-        if existing_embedded_ids:
-            ids_placeholder = ', '.join(map(str, existing_embedded_ids))
-            select_sql += f" WHERE id NOT IN ({ids_placeholder})"
-        
-        df = pd.read_sql(select_sql, con=engine)
-        
-        if df.empty:
+        if df_to_process.empty:
             st.markdown("""
             <div class="info-box">
                 <h4>⚠️ ไม่มีข้อมูลใหม่</h4>
@@ -1190,53 +1369,88 @@ def run_embedding_process(table_name, existing_embedded_ids):
             """, unsafe_allow_html=True)
             return
         
-        st.info(f"📊 พบข้อมูลใหม่ {len(df):,} รายการ")
-        
-        status_text.text("🤖 กำลังสร้าง embeddings...")
-        progress_bar.progress(40)
+        status_text.text("🤖 กำลังเตรียมข้อมูลสำหรับ embedding...")
+        progress_bar.progress(35)
         
         # เตรียมข้อมูล
-        texts = df["name"].tolist()
-        ids = df["id"].tolist()
+        texts = df_to_process["name"].tolist()
+        ids = df_to_process["id"].tolist()
         
-        # จัดการ metadata
-        df_copy = df.copy()
+        # จัดการ metadata อย่างปลอดภัย
+        df_copy = df_to_process.copy()
         if 'signup_date' in df_copy.columns:
             df_copy["signup_date"] = df_copy["signup_date"].apply(
-                lambda d: d.isoformat() if hasattr(d, 'isoformat') else str(d)
+                lambda d: d.isoformat() if hasattr(d, 'isoformat') else str(d) if d is not None else None
             )
-        metadatas = df_copy.drop(columns=["name"]).to_dict(orient="records")
         
-        # สร้าง embeddings
+        # สร้าง metadata โดยไม่รวม name column
+        metadata_columns = [col for col in df_copy.columns if col != 'name']
+        metadatas = df_copy[metadata_columns].to_dict(orient="records")
+        
+        status_text.text("🚀 กำลังสร้าง embeddings...")
+        progress_bar.progress(40)
+        
+        # สร้าง embeddings แบบ batch
         embeddings = []
         total_texts = len(texts)
+        batch_size = 5  # ลดขนาด batch เพื่อป้องกัน timeout
         
-        for i, text in enumerate(texts):
-            try:
-                headers = {"Content-Type": "application/json"}
-                payload = {
-                    "model": embedding_model,
-                    "prompt": str(text)
-                }
-                
-                response = requests.post(embedding_api_url, headers=headers, json=payload, timeout=30)
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    if "embedding" in result and result["embedding"]:
-                        embeddings.append(result["embedding"])
-                    else:
-                        embeddings.append(None)
-                else:
-                    embeddings.append(None)
-                
-                # อัพเดท progress
-                embed_progress = 40 + (i + 1) / total_texts * 40  # 40-80%
-                progress_bar.progress(int(embed_progress))
-                status_text.text(f"🤖 สร้าง embedding: {i + 1}/{total_texts}")
-                
-            except Exception as e:
-                embeddings.append(None)
+        for i in range(0, total_texts, batch_size):
+            batch_texts = texts[i:i+batch_size]
+            batch_embeddings = []
+            
+            for j, text in enumerate(batch_texts):
+                try:
+                    headers = {"Content-Type": "application/json"}
+                    payload = {
+                        "model": embedding_model,
+                        "prompt": str(text)
+                    }
+                    
+                    # เพิ่ม timeout และ retry logic
+                    max_retries = 2
+                    for retry in range(max_retries):
+                        try:
+                            response = requests.post(
+                                embedding_api_url, 
+                                headers=headers, 
+                                json=payload, 
+                                timeout=15  # ลด timeout เพื่อป้องกันค้าง
+                            )
+                            
+                            if response.status_code == 200:
+                                result = response.json()
+                                if "embedding" in result and result["embedding"]:
+                                    batch_embeddings.append(result["embedding"])
+                                    break
+                                else:
+                                    batch_embeddings.append(None)
+                                    break
+                            else:
+                                if retry == max_retries - 1:
+                                    batch_embeddings.append(None)
+                                    st.warning(f"⚠️ API Error for '{text}': {response.status_code}")
+                                
+                        except requests.exceptions.Timeout:
+                            if retry == max_retries - 1:
+                                batch_embeddings.append(None)
+                                st.warning(f"⏰ Timeout for '{text}'")
+                        except Exception as e:
+                            if retry == max_retries - 1:
+                                batch_embeddings.append(None)
+                                st.warning(f"❌ Error for '{text}': {str(e)}")
+                    
+                    # อัพเดท progress
+                    current_index = i + j
+                    embed_progress = 40 + (current_index / total_texts) * 35  # 40-75%
+                    progress_bar.progress(int(embed_progress))
+                    status_text.text(f"🤖 สร้าง embedding: {current_index + 1}/{total_texts}")
+                    
+                except Exception as e:
+                    batch_embeddings.append(None)
+                    st.warning(f"❌ Embedding error: {str(e)}")
+            
+            embeddings.extend(batch_embeddings)
         
         status_text.text(f"💾 บันทึกข้อมูลลง {table_name}_vectors...")
         progress_bar.progress(80)
@@ -1251,36 +1465,44 @@ def run_embedding_process(table_name, existing_embedded_ids):
         inserted = 0
         failed = 0
         
-        with engine.begin() as conn:
-            for _id, name, vector, metadata in zip(ids, texts, embeddings, metadatas):
-                if vector is None:
-                    failed += 1
-                    continue
-                
-                try:
-                    vector_array = np.array(vector, dtype=np.float32)
-                    vector_bytes = vector_array.tobytes()
+        try:
+            with engine.begin() as conn:
+                for _id, name, vector, metadata in zip(ids, texts, embeddings, metadatas):
+                    if vector is None:
+                        failed += 1
+                        continue
                     
-                    conn.execute(
-                        text(f"""
-                            INSERT INTO {embedding_table_name} (id, name, embedding, metadata)
-                            VALUES (:id, :name, :embedding, :metadata)
-                            ON DUPLICATE KEY UPDATE
-                              name = VALUES(name),
-                              embedding = VALUES(embedding),
-                              metadata = VALUES(metadata)
-                        """),
-                        {
-                            "id": int(_id),
-                            "name": str(name)[:255],
-                            "embedding": vector_bytes,
-                            "metadata": json.dumps(metadata, ensure_ascii=False)
-                        }
-                    )
-                    inserted += 1
-                    
-                except Exception as e:
-                    failed += 1
+                    try:
+                        # แปลง vector เป็น bytes
+                        vector_array = np.array(vector, dtype=np.float32)
+                        vector_bytes = vector_array.tobytes()
+                        
+                        # Insert หรือ Update
+                        conn.execute(
+                            text(f"""
+                                INSERT INTO `{embedding_table_name}` (id, name, embedding, metadata)
+                                VALUES (:id, :name, :embedding, :metadata)
+                                ON DUPLICATE KEY UPDATE
+                                  name = VALUES(name),
+                                  embedding = VALUES(embedding),
+                                  metadata = VALUES(metadata)
+                            """),
+                            {
+                                "id": int(_id),
+                                "name": str(name)[:255],
+                                "embedding": vector_bytes,
+                                "metadata": json.dumps(metadata, ensure_ascii=False, default=str)
+                            }
+                        )
+                        inserted += 1
+                        
+                    except Exception as e:
+                        failed += 1
+                        st.warning(f"⚠️ Insert failed for ID {_id}: {str(e)}")
+        
+        except Exception as e:
+            st.error(f"❌ Transaction failed: {str(e)}")
+            return
         
         progress_bar.progress(100)
         status_text.empty()
@@ -1323,19 +1545,28 @@ def run_embedding_process(table_name, existing_embedded_ids):
             st.balloons()
         
         # ตรวจสอบผลลัพธ์
-        with engine.connect() as conn:
-            verify_result = conn.execute(text(f"SELECT COUNT(*) FROM {embedding_table_name}"))
-            total_vectors = verify_result.scalar()
-            
-            sample_result = conn.execute(text(f"SELECT id, name, LENGTH(embedding) as embedding_size FROM {embedding_table_name} LIMIT 3"))
-            
-            st.markdown('<div class="section-header">🔍 ตรวจสอบผลลัพธ์</div>', unsafe_allow_html=True)
-            st.info(f"📊 รวมข้อมูลใน {embedding_table_name}: {total_vectors:,} รายการ")
-            
-            sample_data = sample_result.fetchall()
-            if sample_data:
-                sample_df = pd.DataFrame(sample_data, columns=['ID', 'Name', 'Embedding Size (bytes)'])
-                st.dataframe(sample_df, use_container_width=True, hide_index=True)
+        try:
+            with engine.connect() as conn:
+                verify_result = conn.execute(text(f"SELECT COUNT(*) FROM `{embedding_table_name}`"))
+                total_vectors = verify_result.scalar()
+                
+                sample_result = conn.execute(text(f"""
+                    SELECT id, name, LENGTH(embedding) as embedding_size 
+                    FROM `{embedding_table_name}` 
+                    ORDER BY created_at DESC 
+                    LIMIT 3
+                """))
+                
+                st.markdown('<div class="section-header">🔍 ตรวจสอบผลลัพธ์</div>', unsafe_allow_html=True)
+                st.info(f"📊 รวมข้อมูลใน {embedding_table_name}: {total_vectors:,} รายการ")
+                
+                sample_data = sample_result.fetchall()
+                if sample_data:
+                    sample_df = pd.DataFrame(sample_data, columns=['ID', 'Name', 'Embedding Size (bytes)'])
+                    st.dataframe(sample_df, use_container_width=True, hide_index=True)
+        
+        except Exception as e:
+            st.warning(f"⚠️ ไม่สามารถตรวจสอบผลลัพธ์ได้: {str(e)}")
     
     except Exception as e:
         progress_bar.empty()
