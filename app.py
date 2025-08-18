@@ -896,7 +896,7 @@ with tab_csv:
             df_csv = pd.read_csv(uploaded)
         except Exception as e:
             st.error(f"อ่าน CSV ไม่ได้: {e}")
-            return
+        else:
 
         st.markdown("### 👁️ Preview ข้อมูล CSV")
         st.dataframe(df_csv.head(10), use_container_width=True)
@@ -947,7 +947,7 @@ with tab_csv:
         
         if not selected_columns:
             st.error("⚠️ กรุณาเลือกอย่างน้อย 1 ฟิลด์")
-            return
+        else:
 
         # แสดงฟิลด์ที่เลือก
         st.markdown("### 📊 ฟิลด์ที่เลือก")
