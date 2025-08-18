@@ -651,7 +651,7 @@ def show_embedding_interface():
             columns = st.session_state.db_manager.get_table_columns(selected_table)
             column_names = [col['name'] for col in columns]
             
-            # ให้ผู้ใช้เลือก column ที่จะใช้สำหรับสร้าง embedding
+            # กรองเฉพาะ text columns
             text_columns = []
             for col in columns:
                 col_type = str(col['type']).lower()
@@ -660,76 +660,129 @@ def show_embedding_interface():
                     text_columns.append(col['name'])
             
             if text_columns:
-                source_column = st.selectbox("📝 เลือก Column สำหรับสร้าง Embedding:", 
-                                           options=text_columns, 
-                                           help="เลือก column ที่มีข้อความสำหรับสร้าง vector embeddings")
+                st.markdown("### 📝 เลือกวิธีการสร้าง Embedding")
                 
-                # แสดงข้อมูล table
-                data, column_names = st.session_state.db_manager.get_table_data_sample(selected_table)
+                embedding_mode = st.radio(
+                    "เลือกโหมด:",
+                    ["🔗 รวม Text จากทุก Columns", "📋 เลือก Columns เฉพาะ", "🎯 เลือก Column เดียว"],
+                    help="เลือกวิธีการประมวลผลข้อความสำหรับ embedding"
+                )
                 
-                if data:
-                    st.markdown(f"### 📊 ข้อมูลตัวอย่างจาก {selected_table}")
-                    sample_df = pd.DataFrame(data, columns=column_names)
+                selected_columns = []
+                
+                if embedding_mode == "🔗 รวม Text จากทุก Columns":
+                    selected_columns = text_columns
+                    st.success(f"✅ จะใช้ทุก text columns: {', '.join(text_columns)}")
                     
-                    # แสดงเฉพาะ columns ที่สำคัญ (id, source column, และ columns อื่นๆ ที่เกี่ยวข้อง)
-                    display_columns = ['id'] if 'id' in sample_df.columns else []
-                    if source_column in sample_df.columns:
-                        display_columns.append(source_column)
-                    # เพิ่ม columns อื่นๆ ไม่เกิน 5 columns ทั้งหมด
-                    other_cols = [col for col in sample_df.columns if col not in display_columns][:3]
-                    display_columns.extend(other_cols)
+                elif embedding_mode == "📋 เลือก Columns เฉพาะ":
+                    selected_columns = st.multiselect(
+                        "เลือก Columns ที่ต้องการ:",
+                        options=text_columns,
+                        default=text_columns,
+                        help="เลือกหลาย columns เพื่อรวมข้อความ"
+                    )
                     
-                    st.dataframe(sample_df[display_columns], use_container_width=True)
+                elif embedding_mode == "🎯 เลือก Column เดียว":
+                    single_column = st.selectbox("เลือก Column:", options=text_columns)
+                    selected_columns = [single_column] if single_column else []
+                
+                if selected_columns:
+                    # แสดงตัวอย่างการรวม text
+                    st.markdown("### 🔍 ตัวอย่างการรวม Text")
                     
-                    # แสดงจำนวนข้อมูลทั้งหมด
-                    try:
-                        with st.session_state.db_manager.engine.connect() as conn:
-                            count_result = conn.execute(text(f"SELECT COUNT(*) FROM {selected_table}"))
-                            total_count = count_result.scalar()
-                            
-                            # ตรวจสอบ embedding table ที่มีอยู่
-                            embedding_table = f"{selected_table}_vectors"
-                            embed_count = 0
-                            try:
-                                embed_result = conn.execute(text(f"SELECT COUNT(*) FROM {embedding_table}"))
-                                embed_count = embed_result.scalar()
-                            except:
+                    # ตั้งค่าตัวคั่น
+                    separator = st.text_input("ตัวคั่นระหว่าง columns:", value=" | ", 
+                                            help="ข้อความที่ใช้คั่นระหว่าง columns")
+                    
+                    # แสดงข้อมูล table ตัวอย่าง
+                    data, column_names = st.session_state.db_manager.get_table_data_sample(selected_table)
+                    
+                    if data:
+                        st.markdown(f"### 📊 ข้อมูลตัวอย่างจาก {selected_table}")
+                        sample_df = pd.DataFrame(data, columns=column_names)
+                        
+                        # สร้างตัวอย่างข้อความที่จะ embed
+                        sample_df['🔗 Combined_Text_Preview'] = sample_df.apply(
+                            lambda row: separator.join([
+                                str(row[col]) if pd.notna(row[col]) and str(row[col]).strip() else ""
+                                for col in selected_columns
+                            ]).strip(), axis=1
+                        )
+                        
+                        # แสดงเฉพาะ columns ที่สำคัญ
+                        display_columns = ['id'] if 'id' in sample_df.columns else []
+                        display_columns.extend(selected_columns[:3])  # แสดงไม่เกิน 3 source columns
+                        display_columns.append('🔗 Combined_Text_Preview')
+                        
+                        st.dataframe(sample_df[display_columns], use_container_width=True)
+                        
+                        # แสดงจำนวนข้อมูลทั้งหมด
+                        try:
+                            with st.session_state.db_manager.engine.connect() as conn:
+                                count_result = conn.execute(text(f"SELECT COUNT(*) FROM {selected_table}"))
+                                total_count = count_result.scalar()
+                                
+                                # ตรวจสอบ embedding table ที่มีอยู่
+                                embedding_table = f"{selected_table}_vectors"
                                 embed_count = 0
+                                try:
+                                    embed_result = conn.execute(text(f"SELECT COUNT(*) FROM {embedding_table}"))
+                                    embed_count = embed_result.scalar()
+                                except:
+                                    embed_count = 0
+                                
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("📊 ข้อมูลทั้งหมด", f"{total_count:,}")
+                                with col2:
+                                    st.metric("✅ Embedded แล้ว", f"{embed_count:,}")
+                                with col3:
+                                    remaining = total_count - embed_count
+                                    st.metric("⏳ คงเหลือ", f"{remaining:,}")
+                        
+                        except Exception as e:
+                            st.error(f"ไม่สามารถดึงข้อมูลสถิติได้: {str(e)}")
+                        
+                        # แสดงการตั้งค่า
+                        st.markdown("### ⚙️ การตั้งค่า Embedding")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            batch_size = st.number_input("Batch Size", min_value=1, max_value=1000, value=100)
+                        with col2:
+                            max_records = st.number_input("จำนวดสูงสุดที่จะประมวลผล", 
+                                                        min_value=1, max_value=10000, value=1000)
+                        
+                        # ตัวเลือกเพิ่มเติม
+                        st.markdown("### 🔧 ตัวเลือกขั้นสูง")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            skip_empty = st.checkbox("ข้าม record ที่ว่างเปล่า", value=True,
+                                                    help="ข้าม records ที่ไม่มีข้อความใน columns ที่เลือก")
+                        with col2:
+                            max_text_length = st.number_input("ความยาวข้อความสูงสุด (ตัวอักษร)", 
+                                                            min_value=100, max_value=8000, value=2000,
+                                                            help="จำกัดความยาวข้อความเพื่อป้องกัน API error")
+                        
+                        # แสดงข้อมูล API
+                        st.markdown("### 🔗 API Configuration")
+                        st.text(f"API URL: {EMBEDDING_API_URL}")
+                        st.text(f"Model: {EMBEDDING_MODEL}")
+                        st.text(f"Source Columns: {', '.join(selected_columns)}")
+                        st.text(f"Separator: '{separator}'")
+                        
+                        # ปุ่มเริ่มประมวลผล
+                        if st.button("🚀 เริ่มสร้าง Embeddings", type="primary"):
+                            run_embedding_process(
+                                selected_table, batch_size, max_records, 
+                                selected_columns, separator, skip_empty, max_text_length
+                            )
                             
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("📊 ข้อมูลทั้งหมด", f"{total_count:,}")
-                            with col2:
-                                st.metric("✅ Embedded แล้ว", f"{embed_count:,}")
-                            with col3:
-                                remaining = total_count - embed_count
-                                st.metric("⏳ คงเหลือ", f"{remaining:,}")
-                    
-                    except Exception as e:
-                        st.error(f"ไม่สามารถดึงข้อมูลสถิติได้: {str(e)}")
-                    
-                    # แสดงการตั้งค่า
-                    st.markdown("### ⚙️ การตั้งค่า Embedding")
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        batch_size = st.number_input("Batch Size", min_value=1, max_value=1000, value=100)
-                    with col2:
-                        max_records = st.number_input("จำนวนสูงสุดที่จะประมวลผล", 
-                                                    min_value=1, max_value=10000, value=1000)
-                    
-                    # แสดงข้อมูล API
-                    st.markdown("### 🔗 API Configuration")
-                    st.text(f"API URL: {EMBEDDING_API_URL}")
-                    st.text(f"Model: {EMBEDDING_MODEL}")
-                    st.text(f"Source Column: {source_column}")
-                    
-                    # ปุ่มเริ่มประมวลผล
-                    if st.button("🚀 เริ่มสร้าง Embeddings", type="primary"):
-                        run_embedding_process(selected_table, batch_size, max_records, source_column)
+                    else:
+                        st.info("Table นี้ยังไม่มีข้อมูล")
                         
                 else:
-                    st.info("Table นี้ยังไม่มีข้อมูล")
+                    st.warning("กรุณาเลือก columns สำหรับสร้าง embedding")
                     
             else:
                 st.markdown("""
@@ -748,8 +801,8 @@ def show_embedding_interface():
         """, unsafe_allow_html=True)
 
 
-def run_embedding_process(table_name, batch_size, max_records, source_column):
-    """รันกระบวนการสร้าง embeddings"""
+def run_embedding_process(table_name, batch_size, max_records, source_columns, separator, skip_empty, max_text_length):
+    """รันกระบวนการสร้าง embeddings จากหลาย columns"""
     try:
         # สร้าง embedding table
         embedding_table = f"{table_name}_vectors"
@@ -758,7 +811,8 @@ def run_embedding_process(table_name, batch_size, max_records, source_column):
             conn.execute(text(f"""
                 CREATE TABLE IF NOT EXISTS {embedding_table} (
                     id INT PRIMARY KEY,
-                    source_text TEXT,
+                    combined_text TEXT,
+                    source_columns JSON,
                     embedding LONGBLOB,
                     metadata JSON,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -778,21 +832,19 @@ def run_embedding_process(table_name, batch_size, max_records, source_column):
             except:
                 embedded_ids = set()
             
-            # ดึงข้อมูลที่ยังไม่ได้ embed โดยใช้ source_column ที่เลือก
+            # สร้าง SQL query สำหรับดึงข้อมูล
+            columns_sql = ', '.join(source_columns)
+            
             if embedded_ids:
                 ids_placeholder = ', '.join(map(str, embedded_ids))
                 query = f"""
-                SELECT id, {source_column} FROM {table_name} 
+                SELECT id, {columns_sql} FROM {table_name} 
                 WHERE id NOT IN ({ids_placeholder}) 
-                AND {source_column} IS NOT NULL 
-                AND TRIM({source_column}) != ''
                 LIMIT {max_records}
                 """
             else:
                 query = f"""
-                SELECT id, {source_column} FROM {table_name} 
-                WHERE {source_column} IS NOT NULL 
-                AND TRIM({source_column}) != ''
+                SELECT id, {columns_sql} FROM {table_name} 
                 LIMIT {max_records}
                 """
             
@@ -800,10 +852,10 @@ def run_embedding_process(table_name, batch_size, max_records, source_column):
             data = result.fetchall()
         
         if not data:
-            st.info("✅ ข้อมูลทั้งหมด embedded เรียบร้อยแล้ว หรือไม่มีข้อมูลที่ไม่เป็นค่าว่าง")
+            st.info("✅ ข้อมูลทั้งหมด embedded เรียบร้อยแล้ว")
             return
         
-        st.info(f"🔄 กำลังประมวลผล {len(data):,} records จาก column '{source_column}'...")
+        st.info(f"🔄 กำลังประมวลผล {len(data):,} records จาก columns: {', '.join(source_columns)}")
         
         # สร้าง progress tracking
         progress_bar = st.progress(0)
@@ -811,6 +863,7 @@ def run_embedding_process(table_name, batch_size, max_records, source_column):
         
         success_count = 0
         error_count = 0
+        skipped_count = 0
         
         # ประมวลผลเป็น batch
         for i in range(0, len(data), batch_size):
@@ -820,18 +873,36 @@ def run_embedding_process(table_name, batch_size, max_records, source_column):
             batch_embeddings = []
             for record in batch_data:
                 try:
-                    # เรียก API สร้าง embedding
-                    text_content = str(record[1]) if record[1] else ""
+                    # รวม text จากหลาย columns
+                    record_id = record[0]
+                    text_parts = []
                     
-                    if not text_content.strip():
-                        error_count += 1
+                    for j, col_name in enumerate(source_columns):
+                        col_value = record[j + 1]  # +1 เพราะ index 0 คือ id
+                        if col_value is not None and str(col_value).strip():
+                            text_parts.append(str(col_value).strip())
+                    
+                    combined_text = separator.join(text_parts)
+                    
+                    # ตรวจสอบข้อความว่าง
+                    if skip_empty and not combined_text.strip():
+                        skipped_count += 1
                         continue
                     
+                    # จำกัดความยาวข้อความ
+                    if len(combined_text) > max_text_length:
+                        combined_text = combined_text[:max_text_length] + "..."
+                    
+                    if not combined_text.strip():
+                        skipped_count += 1
+                        continue
+                    
+                    # เรียก API สร้าง embedding
                     response = requests.post(
                         EMBEDDING_API_URL,
                         json={
                             "model": EMBEDDING_MODEL,
-                            "prompt": text_content
+                            "prompt": combined_text
                         },
                         timeout=30
                     )
@@ -840,9 +911,10 @@ def run_embedding_process(table_name, batch_size, max_records, source_column):
                         result = response.json()
                         if "embedding" in result:
                             batch_embeddings.append({
-                                "id": record[0],
-                                "source_text": text_content,
-                                "embedding": result["embedding"]
+                                "id": record_id,
+                                "combined_text": combined_text,
+                                "embedding": result["embedding"],
+                                "source_columns": source_columns
                             })
                             success_count += 1
                         else:
@@ -863,21 +935,25 @@ def run_embedding_process(table_name, batch_size, max_records, source_column):
                             
                             conn.execute(
                                 text(f"""
-                                    INSERT INTO {embedding_table} (id, source_text, embedding, metadata)
-                                    VALUES (:id, :source_text, :embedding, :metadata)
+                                    INSERT INTO {embedding_table} (id, combined_text, source_columns, embedding, metadata)
+                                    VALUES (:id, :combined_text, :source_columns, :embedding, :metadata)
                                     ON DUPLICATE KEY UPDATE
-                                      source_text = VALUES(source_text),
+                                      combined_text = VALUES(combined_text),
+                                      source_columns = VALUES(source_columns),
                                       embedding = VALUES(embedding),
                                       metadata = VALUES(metadata)
                                 """),
                                 {
                                     "id": item["id"],
-                                    "source_text": item["source_text"][:500],  # จำกัดความยาว
+                                    "combined_text": item["combined_text"][:1000],  # จำกัดในฐานข้อมูล
+                                    "source_columns": json.dumps(item["source_columns"]),
                                     "embedding": vector_bytes,
                                     "metadata": json.dumps({
                                         "original_id": item["id"],
-                                        "source_column": source_column,
-                                        "text_length": len(item["source_text"])
+                                        "source_columns": item["source_columns"],
+                                        "separator": separator,
+                                        "text_length": len(item["combined_text"]),
+                                        "embedding_mode": "multi_column"
                                     })
                                 }
                             )
@@ -887,7 +963,7 @@ def run_embedding_process(table_name, batch_size, max_records, source_column):
             # อัพเดท progress
             progress = min((i + batch_size) / len(data), 1.0)
             progress_bar.progress(progress)
-            status_text.text(f"ประมวลผล: {min(i + batch_size, len(data))}/{len(data)} (✅ {success_count}, ❌ {error_count})")
+            status_text.text(f"ประมวลผล: {min(i + batch_size, len(data))}/{len(data)} (✅ {success_count}, ❌ {error_count}, ⏭️ {skipped_count})")
         
         # แสดงผลสรุป
         progress_bar.empty()
@@ -898,8 +974,10 @@ def run_embedding_process(table_name, batch_size, max_records, source_column):
             <h3>🎉 Embedding Process เสร็จสิ้น!</h3>
             <p>✅ สำเร็จ: {success_count:,} records</p>
             <p>❌ ผิดพลาด: {error_count:,} records</p>
+            <p>⏭️ ข้าม: {skipped_count:,} records</p>
             <p>📊 บันทึกใน table: {embedding_table}</p>
-            <p>📝 Source column: {source_column}</p>
+            <p>📝 Source columns: {', '.join(source_columns)}</p>
+            <p>🔗 Separator: '{separator}'</p>
         </div>
         """, unsafe_allow_html=True)
         
