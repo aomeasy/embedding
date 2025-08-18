@@ -2,19 +2,14 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import json
-import io
-import subprocess
-import sys
 import base64
 import requests
 from datetime import datetime, date
 from sqlalchemy import create_engine, text, inspect, MetaData, Table, Column, Integer, String, Text, DateTime, Float
 from sqlalchemy.exc import SQLAlchemyError
 import pymysql
-from dotenv import load_dotenv
 import os
 import time
-import threading
 
 # Configuration
 st.set_page_config(
@@ -23,6 +18,18 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# เพิ่มการโหลด environment variables สำหรับ Streamlit Cloud
+# Streamlit Cloud จะใช้ secrets management แทน .env file
+try:
+    TIDB_URL = st.secrets.get("TIDB_URL") or os.environ.get("TIDB_URL")
+    EMBEDDING_API_URL = st.secrets.get("EMBEDDING_API_URL") or os.environ.get("EMBEDDING_API_URL", "http://209.15.123.47:11434/api/embeddings")
+    EMBEDDING_MODEL = st.secrets.get("EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL", "nomic-embed-text:latest")
+except:
+    # Fallback สำหรับการรันใน local
+    TIDB_URL = os.environ.get("TIDB_URL")
+    EMBEDDING_API_URL = os.environ.get("EMBEDDING_API_URL", "http://209.15.123.47:11434/api/embeddings")
+    EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text:latest")
 
 # Modern CSS with Enhanced Sidebar and Dark/Neon Theme
 st.markdown("""
@@ -47,137 +54,6 @@ st.markdown("""
         box-shadow: 5px 0 20px rgba(59, 130, 246, 0.1) !important;
     }
     
-    .css-1d391kg .css-10trblm {
-        color: #e1e5f1;
-    }
-    
-    /* Modern Sidebar Menu */
-    .sidebar-logo {
-        text-align: center;
-        padding: 2rem 1rem 1rem;
-        margin-bottom: 1rem;
-        border-bottom: 1px solid rgba(59, 130, 246, 0.2);
-    }
-    
-    .sidebar-logo h1 {
-        background: linear-gradient(45deg, #3b82f6, #06b6d4, #0ea5e9);
-        background-clip: text;
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-size: 1.5rem;
-        font-weight: 800;
-        margin: 0;
-        text-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
-    }
-    
-    .sidebar-logo p {
-        color: rgba(255, 255, 255, 0.7);
-        font-size: 0.8rem;
-        margin: 0.5rem 0 0 0;
-        font-weight: 300;
-    }
-    
-    /* Sidebar Radio Buttons - Modern Cards */
-    .stRadio > div {
-        gap: 0.75rem;
-    }
-    
-    .stRadio > div > label {
-        background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-        border: 1px solid #475569;
-        border-radius: 16px;
-        padding: 1rem 1.2rem;
-        margin: 0;
-        cursor: pointer;
-        transition: all 0.3s ease;
-        position: relative;
-        overflow: hidden;
-        color: #e1e5f1;
-        font-weight: 500;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    }
-    
-    .stRadio > div > label::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 4px;
-        height: 100%;
-        background: linear-gradient(180deg, #3b82f6, #06b6d4);
-        transform: scaleY(0);
-        transition: transform 0.3s ease;
-        border-radius: 0 4px 4px 0;
-    }
-    
-    .stRadio > div > label:hover {
-        background: linear-gradient(135deg, #334155 0%, #475569 100%);
-        border-color: #3b82f6;
-        transform: translateX(8px) scale(1.02);
-        box-shadow: 0 8px 25px rgba(59, 130, 246, 0.2);
-    }
-    
-    .stRadio > div > label:hover::before {
-        transform: scaleY(1);
-    }
-    
-    /* Selected radio button */
-    .stRadio > div > label[data-baseweb="radio"] > div:first-child {
-        display: none;
-    }
-    
-    .stRadio > div > label[data-checked="true"] {
-        background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #06b6d4 100%);
-        border-color: #06b6d4;
-        color: white;
-        transform: translateX(12px) scale(1.05);
-        box-shadow: 0 12px 35px rgba(59, 130, 246, 0.4);
-    }
-    
-    .stRadio > div > label[data-checked="true"]::before {
-        transform: scaleY(1);
-        background: linear-gradient(180deg, #ffffff, #e1e5f1);
-        width: 6px;
-    }
-    
-    /* Sidebar Section Headers */
-    .sidebar-section {
-        margin: 2rem 1rem 1rem;
-        padding: 1rem;
-        background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
-        border-radius: 12px;
-        text-align: center;
-        position: relative;
-        overflow: hidden;
-        box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3);
-    }
-    
-    .sidebar-section::before {
-        content: '';
-        position: absolute;
-        top: -50%;
-        left: -50%;
-        width: 200%;
-        height: 200%;
-        background: linear-gradient(45deg, transparent 30%, rgba(255, 255, 255, 0.1) 50%, transparent 70%);
-        transform: rotate(45deg);
-        animation: shimmer 3s infinite;
-    }
-    
-    @keyframes shimmer {
-        0% { transform: translateX(-100%) translateY(-100%) rotate(45deg); }
-        100% { transform: translateX(100%) translateY(100%) rotate(45deg); }
-    }
-    
-    .sidebar-section h3 {
-        color: white;
-        margin: 0;
-        font-size: 1rem;
-        font-weight: 600;
-        position: relative;
-        z-index: 2;
-    }
-    
     /* Header */
     .main-header {
         background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 25%, #06b6d4 50%, #0ea5e9 75%, #2563eb 100%);
@@ -189,27 +65,6 @@ st.markdown("""
         position: relative;
         overflow: hidden;
         border: 1px solid rgba(59, 130, 246, 0.3);
-    }
-    
-    .main-header::before {
-        content: '';
-        position: absolute;
-        top: -50%;
-        left: -50%;
-        width: 200%;
-        height: 200%;
-        background: linear-gradient(45deg, 
-            rgba(6, 182, 212, 0.1) 0%, 
-            transparent 25%, 
-            rgba(59, 130, 246, 0.1) 50%, 
-            transparent 75%, 
-            rgba(14, 165, 233, 0.1) 100%);
-        animation: headerShimmer 6s infinite;
-    }
-    
-    @keyframes headerShimmer {
-        0% { transform: translateX(-100%) translateY(-100%) rotate(45deg); }
-        100% { transform: translateX(100%) translateY(100%) rotate(45deg); }
     }
     
     .main-header h1 {
@@ -225,16 +80,6 @@ st.markdown("""
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         letter-spacing: -0.02em;
-    }
-    
-    .main-header p {
-        color: rgba(255, 255, 255, 0.9);
-        margin: 1rem 0 0 0;
-        font-size: 1.2rem;
-        text-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
-        position: relative;
-        z-index: 2;
-        font-weight: 300;
     }
     
     /* Status Indicators */
@@ -276,18 +121,6 @@ st.markdown("""
         border-radius: 16px;
         margin: 1rem 0;
         box-shadow: 0 10px 30px rgba(16, 185, 129, 0.2), 0 0 0 1px rgba(16, 185, 129, 0.1);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .success-box::before {
-        content: '✅';
-        position: absolute;
-        right: 1.5rem;
-        top: 50%;
-        transform: translateY(-50%);
-        font-size: 2rem;
-        opacity: 0.4;
     }
     
     /* Error Box */
@@ -299,18 +132,6 @@ st.markdown("""
         border-radius: 16px;
         margin: 1rem 0;
         box-shadow: 0 10px 30px rgba(239, 68, 68, 0.2), 0 0 0 1px rgba(239, 68, 68, 0.1);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .error-box::before {
-        content: '❌';
-        position: absolute;
-        right: 1.5rem;
-        top: 50%;
-        transform: translateY(-50%);
-        font-size: 2rem;
-        opacity: 0.4;
     }
     
     /* Info Box */
@@ -322,62 +143,6 @@ st.markdown("""
         border-radius: 16px;
         margin: 1rem 0;
         box-shadow: 0 10px 30px rgba(59, 130, 246, 0.2), 0 0 0 1px rgba(59, 130, 246, 0.1);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .info-box::before {
-        content: 'ℹ️';
-        position: absolute;
-        right: 1.5rem;
-        top: 50%;
-        transform: translateY(-50%);
-        font-size: 2rem;
-        opacity: 0.4;
-    }
-    
-    /* Metric Card */
-    .metric-card {
-        background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-        border: 1px solid #475569;
-        padding: 2rem 1.5rem;
-        border-radius: 20px;
-        text-align: center;
-        transition: all 0.3s ease;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(71, 85, 105, 0.2);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .metric-card:hover {
-        transform: translateY(-8px) scale(1.02);
-        box-shadow: 0 20px 40px rgba(59, 130, 246, 0.2), 0 0 0 1px rgba(59, 130, 246, 0.3);
-        border-color: #3b82f6;
-    }
-    
-    .metric-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 3px;
-        background: linear-gradient(90deg, #3b82f6, #06b6d4, #0ea5e9);
-        border-radius: 20px 20px 0 0;
-    }
-    
-    /* Section Header */
-    .section-header {
-        background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #06b6d4 100%);
-        color: #ffffff;
-        padding: 1rem 2rem;
-        border-radius: 16px;
-        margin: 2rem 0 1rem 0;
-        font-weight: 600;
-        font-size: 1.1rem;
-        text-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
-        box-shadow: 0 8px 25px rgba(59, 130, 246, 0.25), 0 0 0 1px rgba(59, 130, 246, 0.2);
-        border: 1px solid rgba(59, 130, 246, 0.3);
     }
     
     /* Buttons */
@@ -391,120 +156,6 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
         box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3), 0 0 0 1px rgba(59, 130, 246, 0.2);
         transition: all 0.3s ease;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        font-size: 0.875rem;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 12px 35px rgba(59, 130, 246, 0.4), 0 0 0 1px rgba(59, 130, 246, 0.4);
-        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 50%, #1e40af 100%);
-    }
-    
-    .stButton > button:active {
-        transform: translateY(0px);
-    }
-    
-    /* Form Elements */
-    .stSelectbox > div > div {
-        background: #1e293b !important;
-        border: 2px solid #334155 !important;
-        border-radius: 12px !important;
-        color: #e1e5f1 !important;
-    }
-    
-    .stSelectbox > div > div:focus-within {
-        border-color: #3b82f6 !important;
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1) !important;
-    }
-    
-    .stTextInput > div > div > input {
-        background: #1e293b !important;
-        border: 2px solid #334155 !important;
-        border-radius: 12px !important;
-        color: #e1e5f1 !important;
-        padding: 0.75rem 1rem !important;
-    }
-    
-    .stTextInput > div > div > input:focus {
-        border-color: #3b82f6 !important;
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1) !important;
-    }
-    
-    .stTextInput > div > div > input::placeholder {
-        color: #64748b !important;
-    }
-    
-    /* Progress */
-    .stProgress > div > div {
-        background: linear-gradient(90deg, #3b82f6 0%, #06b6d4 50%, #0ea5e9 100%) !important;
-        border-radius: 10px !important;
-        box-shadow: 0 0 10px rgba(59, 130, 246, 0.5) !important;
-    }
-    
-    .progress-container {
-        background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-        border: 1px solid #475569;
-        border-radius: 16px;
-        padding: 1.5rem;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-        margin: 1rem 0;
-    }
-    
-    /* Embedding Status */
-    .embedding-status {
-        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-        border: 1px solid #334155;
-        border-radius: 16px;
-        padding: 1.5rem;
-        margin: 1rem 0;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .embedding-status::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 2px;
-        background: linear-gradient(90deg, #10b981, #059669);
-        animation: loadingBar 2s infinite;
-    }
-    
-    @keyframes loadingBar {
-        0% { transform: translateX(-100%); }
-        100% { transform: translateX(100%); }
-    }
-    
-    /* DataFrame */
-    .stDataFrame {
-        border-radius: 16px !important;
-        overflow: hidden !important;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(71, 85, 105, 0.3) !important;
-        border: 1px solid #334155 !important;
-    }
-    
-    /* Custom scrollbar */
-    ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-    }
-    
-    ::-webkit-scrollbar-track {
-        background: #1e293b;
-        border-radius: 4px;
-    }
-    
-    ::-webkit-scrollbar-thumb {
-        background: linear-gradient(135deg, #3b82f6, #06b6d4);
-        border-radius: 4px;
-    }
-    
-    ::-webkit-scrollbar-thumb:hover {
-        background: linear-gradient(135deg, #2563eb, #0ea5e9);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -517,12 +168,11 @@ class DatabaseManager:
     def connect_to_database(self):
         """เชื่อมต่อกับ TiDB Database"""
         try:
-            tidb_url = os.getenv("TIDB_URL")
-            if not tidb_url:
+            if not TIDB_URL:
                 st.error("❌ TIDB_URL ไม่ได้กำหนดใน environment variables")
                 return False
             
-            self.engine = create_engine(tidb_url, pool_pre_ping=True, pool_recycle=300)
+            self.engine = create_engine(TIDB_URL, pool_pre_ping=True, pool_recycle=300)
             
             # ทดสอบการเชื่อมต่อ
             with self.engine.connect() as conn:
@@ -553,31 +203,7 @@ class DatabaseManager:
         except Exception as e:
             st.error(f"❌ ไม่สามารถดึง columns ของ table {table_name} ได้: {str(e)}")
             return []
-    
-    def check_embedded_records(self, table_name):
-        """ตรวจสอบว่า record ไหน embedded แล้ว"""
-        try:
-            embedding_table_name = f"{table_name}_vectors"
-            
-            with self.engine.connect() as conn:
-                # ตรวจสอบว่ามี embedding table หรือไม่
-                result = conn.execute(text(f"SHOW TABLES LIKE '{embedding_table_name}'"))
-                if not result.fetchone():
-                    return set(), 0
-                
-                # ดึง IDs ที่ embed แล้ว
-                embedded_result = conn.execute(text(f"SELECT id FROM {embedding_table_name}"))
-                embedded_ids = set(row[0] for row in embedded_result.fetchall())
-                
-                # นับจำนวนรวม
-                total_result = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}"))
-                total_count = total_result.scalar()
-                
-                return embedded_ids, total_count
-        except Exception as e:
-            st.error(f"❌ ไม่สามารถตรวจสอบ embedded records ได้: {str(e)}")
-            return set(), 0
-    
+
     def get_table_data_sample(self, table_name, limit=5):
         """ดึงข้อมูลตัวอย่างจาก table"""
         try:
@@ -589,7 +215,7 @@ class DatabaseManager:
         except Exception as e:
             st.error(f"❌ ไม่สามารถดึงข้อมูลตัวอย่างได้: {str(e)}")
             return [], []
-    
+
     def create_new_table(self, table_name, columns_config):
         """สร้าง table ใหม่ตาม configuration ที่กำหนด"""
         try:
@@ -630,30 +256,7 @@ class DatabaseManager:
         except Exception as e:
             st.error(f"❌ ไม่สามารถสร้าง table {table_name} ได้: {str(e)}")
             return False
-    
-    def create_embedding_table(self, base_table_name):
-        """สร้าง table สำหรับเก็บ embeddings"""
-        try:
-            embedding_table_name = f"{base_table_name}_vectors"
-            
-            with self.engine.connect() as conn:
-                conn.execute(text(f"""
-                    CREATE TABLE IF NOT EXISTS {embedding_table_name} (
-                        id INT PRIMARY KEY,
-                        name VARCHAR(255),
-                        embedding LONGBLOB,
-                        metadata JSON,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        INDEX idx_created_at (created_at)
-                    )
-                """))
-                conn.commit()
-            
-            return embedding_table_name
-        except Exception as e:
-            st.error(f"❌ ไม่สามารถสร้าง embedding table ได้: {str(e)}")
-            return None
-    
+
     def insert_data_from_csv(self, table_name, df):
         """เพิ่มข้อมูลจาก DataFrame เข้า table"""
         try:
@@ -706,22 +309,454 @@ class DatabaseManager:
             st.error(f"❌ ไม่สามารถเพิ่มข้อมูลได้: {str(e)}")
             return 0, len(df), [str(e)]
 
-def main():
-    # Modern Sidebar
-    with st.sidebar:
+def show_create_table_interface():
+    """แสดง interface สำหรับสร้าง table ใหม่"""
+    st.markdown("""
+    <div class="info-box">
+        <h3>🆕 สร้าง Table ใหม่</h3>
+        <p>สร้าง database table สำหรับเก็บข้อมูลของคุณ</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Input สำหรับชื่อ table
+    table_name = st.text_input("🏷️ ชื่อ Table:", placeholder="เช่น users, products, etc.")
+    
+    if table_name:
+        st.markdown("### 📋 กำหนด Columns")
+        
+        # เก็บ columns configuration ใน session state
+        if f"columns_config_{table_name}" not in st.session_state:
+            st.session_state[f"columns_config_{table_name}"] = []
+        
+        # Form สำหรับเพิ่ม column
+        with st.form(f"add_column_{table_name}"):
+            col1, col2, col3 = st.columns([2, 2, 1])
+            
+            with col1:
+                col_name = st.text_input("Column Name")
+            with col2:
+                col_type = st.selectbox("Data Type", 
+                                      ["String", "Integer", "Float", "Text", "DateTime"])
+            with col3:
+                col_nullable = st.checkbox("Nullable", value=True)
+            
+            if st.form_submit_button("➕ เพิ่ม Column"):
+                if col_name:
+                    st.session_state[f"columns_config_{table_name}"].append({
+                        "name": col_name,
+                        "type": col_type,
+                        "nullable": col_nullable
+                    })
+                    st.success(f"เพิ่ม column '{col_name}' แล้ว")
+        
+        # แสดง columns ที่กำหนดแล้ว
+        if st.session_state[f"columns_config_{table_name}"]:
+            st.markdown("#### 📊 Columns ที่กำหนดแล้ว:")
+            
+            for i, col in enumerate(st.session_state[f"columns_config_{table_name}"]):
+                col_display1, col_display2 = st.columns([4, 1])
+                with col_display1:
+                    st.text(f"📌 {col['name']} ({col['type']}) - {'NULL' if col['nullable'] else 'NOT NULL'}")
+                with col_display2:
+                    if st.button("🗑️", key=f"remove_{table_name}_{i}"):
+                        st.session_state[f"columns_config_{table_name}"].pop(i)
+                        st.experimental_rerun()
+            
+            # ปุ่มสร้าง table
+            if st.button("🚀 สร้าง Table", type="primary"):
+                if st.session_state.db_manager.create_new_table(
+                    table_name, 
+                    st.session_state[f"columns_config_{table_name}"]
+                ):
+                    st.markdown(f"""
+                    <div class="success-box">
+                        <h3>✅ สร้าง Table สำเร็จ!</h3>
+                        <p>Table '{table_name}' ถูกสร้างเรียบร้อยแล้ว</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # รีเซ็ต configuration
+                    del st.session_state[f"columns_config_{table_name}"]
+
+def show_select_table_interface():
+    """แสดง interface สำหรับเลือก table ที่มีอยู่"""
+    st.markdown("""
+    <div class="info-box">
+        <h3>📋 เลือก Table ที่มีอยู่</h3>
+        <p>ดูข้อมูลและจัดการ tables ที่มีอยู่ในระบบ</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    tables = st.session_state.db_manager.get_existing_tables()
+    
+    if tables:
+        selected_table = st.selectbox("🎯 เลือก Table:", options=tables)
+        
+        if selected_table:
+            # แสดงข้อมูล table
+            columns = st.session_state.db_manager.get_table_columns(selected_table)
+            data, column_names = st.session_state.db_manager.get_table_data_sample(selected_table)
+            
+            # แสดง schema
+            st.markdown(f"### 🏗️ Schema ของ {selected_table}")
+            schema_data = []
+            for col in columns:
+                schema_data.append({
+                    "Column": col['name'],
+                    "Type": str(col['type']),
+                    "Nullable": "YES" if col['nullable'] else "NO"
+                })
+            
+            st.dataframe(pd.DataFrame(schema_data), use_container_width=True)
+            
+            # แสดงข้อมูลตัวอย่าง
+            if data:
+                st.markdown(f"### 📊 ข้อมูลตัวอย่าง ({len(data)} แถว)")
+                sample_df = pd.DataFrame(data, columns=column_names)
+                st.dataframe(sample_df, use_container_width=True)
+            else:
+                st.info("Table นี้ยังไม่มีข้อมูล")
+    else:
         st.markdown("""
-        <div class="sidebar-logo">
-            <h1>🚀 NTOneEmbedding</h1>
-            <p>AI/ML Data Management System</p>
+        <div class="error-box">
+            <h3>❌ ไม่พบ Tables</h3>
+            <p>ยังไม่มี tables ในระบบ กรุณาสร้าง table ใหม่ก่อน</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+def show_upload_csv_interface():
+    """แสดง interface สำหรับ upload CSV"""
+    st.markdown("""
+    <div class="info-box">
+        <h3>📁 Upload CSV File</h3>
+        <p>อัพโหลดไฟล์ CSV เพื่อเพิ่มข้อมูลเข้า table</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # เลือก table ที่จะ insert ข้อมูล
+    tables = st.session_state.db_manager.get_existing_tables()
+    
+    if tables:
+        target_table = st.selectbox("🎯 เลือก Target Table:", options=tables)
+        
+        # Upload file
+        uploaded_file = st.file_uploader("📤 เลือกไฟล์ CSV", type=['csv'])
+        
+        if uploaded_file and target_table:
+            try:
+                # อ่านไฟล์ CSV
+                df = pd.read_csv(uploaded_file)
+                
+                st.markdown(f"### 📊 ข้อมูลใน CSV ({len(df)} แถว)")
+                st.dataframe(df.head(10), use_container_width=True)
+                
+                # ตรวจสอบ columns
+                table_columns = st.session_state.db_manager.get_table_columns(target_table)
+                table_column_names = [col['name'] for col in table_columns]
+                
+                st.markdown("### 🔍 การตรวจสอบ Columns")
+                
+                csv_columns = list(df.columns)
+                matching_columns = set(csv_columns) & set(table_column_names)
+                missing_columns = set(table_column_names) - set(csv_columns)
+                extra_columns = set(csv_columns) - set(table_column_names)
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.success(f"✅ ตรงกัน: {len(matching_columns)}")
+                with col2:
+                    if missing_columns:
+                        st.warning(f"⚠️ ไม่มีใน CSV: {len(missing_columns)}")
+                    else:
+                        st.info("📋 ครบถ้วน")
+                with col3:
+                    if extra_columns:
+                        st.info(f"📎 เพิ่มเติม: {len(extra_columns)}")
+                    else:
+                        st.info("🎯 พอดี")
+                
+                # แสดงรายละเอียด columns
+                if missing_columns:
+                    st.warning(f"Columns ที่ไม่มีใน CSV: {', '.join(missing_columns)}")
+                if extra_columns:
+                    st.info(f"Columns เพิ่มเติมใน CSV: {', '.join(extra_columns)}")
+                
+                # ปุ่ม import
+                if st.button("🚀 Import ข้อมูล", type="primary"):
+                    with st.spinner("กำลัง import ข้อมูล..."):
+                        success_count, error_count, errors = st.session_state.db_manager.insert_data_from_csv(
+                            target_table, df
+                        )
+                    
+                    if success_count > 0:
+                        st.markdown(f"""
+                        <div class="success-box">
+                            <h3>✅ Import สำเร็จ!</h3>
+                            <p>Import สำเร็จ: {success_count:,} แถว</p>
+                            <p>Error: {error_count:,} แถว</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown("""
+                        <div class="error-box">
+                            <h3>❌ Import ไม่สำเร็จ</h3>
+                            <p>กรุณาตรวจสอบข้อมูลและลองใหม่อีกครั้ง</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # แสดง errors ถ้ามี
+                    if errors and len(errors) <= 10:
+                        st.error("Errors:")
+                        for error in errors:
+                            st.text(error)
+            
+            except Exception as e:
+                st.error(f"❌ ไม่สามารถอ่านไฟล์ CSV ได้: {str(e)}")
+    else:
+        st.markdown("""
+        <div class="error-box">
+            <h3>❌ ไม่พบ Tables</h3>
+            <p>ยังไม่มี tables ในระบบ กรุณาสร้าง table ใหม่ก่อน</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+def show_embedding_interface():
+    """แสดง interface สำหรับ embedding process"""
+    st.markdown("""
+    <div class="info-box">
+        <h3>🤖 Run Embedding Process</h3>
+        <p>สร้าง vector embeddings จากข้อมูลข้อความ</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # เลือก table สำหรับ embedding
+    tables = st.session_state.db_manager.get_existing_tables()
+    
+    if tables:
+        # กรอง tables ที่มี name column
+        suitable_tables = []
+        for table in tables:
+            columns = st.session_state.db_manager.get_table_columns(table)
+            column_names = [col['name'] for col in columns]
+            if 'name' in column_names:
+                suitable_tables.append(table)
+        
+        if suitable_tables:
+            selected_table = st.selectbox("🎯 เลือก Table:", options=suitable_tables)
+            
+            if selected_table:
+                # แสดงข้อมูล table
+                data, column_names = st.session_state.db_manager.get_table_data_sample(selected_table)
+                
+                if data:
+                    st.markdown(f"### 📊 ข้อมูลตัวอย่างจาก {selected_table}")
+                    sample_df = pd.DataFrame(data, columns=column_names)
+                    st.dataframe(sample_df, use_container_width=True)
+                    
+                    # แสดงจำนวนข้อมูลทั้งหมด
+                    try:
+                        with st.session_state.db_manager.engine.connect() as conn:
+                            count_result = conn.execute(text(f"SELECT COUNT(*) FROM {selected_table}"))
+                            total_count = count_result.scalar()
+                            
+                            # ตรวจสอบ embedding table ที่มีอยู่
+                            embedding_table = f"{selected_table}_vectors"
+                            embed_count = 0
+                            try:
+                                embed_result = conn.execute(text(f"SELECT COUNT(*) FROM {embedding_table}"))
+                                embed_count = embed_result.scalar()
+                            except:
+                                embed_count = 0
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("📊 ข้อมูลทั้งหมด", f"{total_count:,}")
+                            with col2:
+                                st.metric("✅ Embedded แล้ว", f"{embed_count:,}")
+                            with col3:
+                                remaining = total_count - embed_count
+                                st.metric("⏳ คงเหลือ", f"{remaining:,}")
+                    
+                    except Exception as e:
+                        st.error(f"ไม่สามารถดึงข้อมูลสถิติได้: {str(e)}")
+                    
+                    # แสดงการตั้งค่า
+                    st.markdown("### ⚙️ การตั้งค่า Embedding")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        batch_size = st.number_input("Batch Size", min_value=1, max_value=1000, value=100)
+                    with col2:
+                        max_records = st.number_input("จำนวนสูงสุดที่จะประมวลผล", 
+                                                    min_value=1, max_value=10000, value=1000)
+                    
+                    # แสดงข้อมูล API
+                    st.markdown("### 🔗 API Configuration")
+                    st.text(f"API URL: {EMBEDDING_API_URL}")
+                    st.text(f"Model: {EMBEDDING_MODEL}")
+                    
+                    # ปุ่มเริ่มประมวลผล
+                    if st.button("🚀 เริ่มสร้าง Embeddings", type="primary"):
+                        run_embedding_process(selected_table, batch_size, max_records)
+                        
+                else:
+                    st.info("Table นี้ยังไม่มีข้อมูล")
+        else:
+            st.markdown("""
+            <div class="error-box">
+                <h3>❌ ไม่พบ Table ที่เหมาะสม</h3>
+                <p>ต้องมี table ที่มี column 'name' สำหรับการสร้าง embeddings</p>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="error-box">
+            <h3>❌ ไม่พบ Tables</h3>
+            <p>ยังไม่มี tables ในระบบ กรุณาสร้าง table ใหม่ก่อน</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+def run_embedding_process(table_name, batch_size, max_records):
+    """รันกระบวนการสร้าง embeddings"""
+    try:
+        # สร้าง embedding table
+        embedding_table = f"{table_name}_vectors"
+        
+        with st.session_state.db_manager.engine.connect() as conn:
+            conn.execute(text(f"""
+                CREATE TABLE IF NOT EXISTS {embedding_table} (
+                    id INT PRIMARY KEY,
+                    name VARCHAR(255),
+                    embedding LONGBLOB,
+                    metadata JSON,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_created_at (created_at)
+                )
+            """))
+            conn.commit()
+        
+        st.success(f"✅ สร้าง table {embedding_table} เรียบร้อยแล้ว")
+        
+        # ดึงข้อมูลที่ยังไม่ได้ embed
+        with st.session_state.db_manager.engine.connect() as conn:
+            # ตรวจสอบ IDs ที่ embed แล้ว
+            try:
+                embedded_result = conn.execute(text(f"SELECT id FROM {embedding_table}"))
+                embedded_ids = set(row[0] for row in embedded_result.fetchall())
+            except:
+                embedded_ids = set()
+            
+            # ดึงข้อมูลที่ยังไม่ได้ embed
+            if embedded_ids:
+                ids_placeholder = ', '.join(map(str, embedded_ids))
+                query = f"""
+                SELECT id, name FROM {table_name} 
+                WHERE id NOT IN ({ids_placeholder}) 
+                LIMIT {max_records}
+                """
+            else:
+                query = f"SELECT id, name FROM {table_name} LIMIT {max_records}"
+            
+            result = conn.execute(text(query))
+            data = result.fetchall()
+        
+        if not data:
+            st.info("✅ ข้อมูลทั้งหมด embedded เรียบร้อยแล้ว")
+            return
+        
+        st.info(f"🔄 กำลังประมวลผล {len(data):,} records...")
+        
+        # สร้าง progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        success_count = 0
+        error_count = 0
+        
+        # ประมวลผลเป็น batch
+        for i in range(0, len(data), batch_size):
+            batch_data = data[i:i + batch_size]
+            
+            # สร้าง embeddings สำหรับ batch นี้
+            batch_embeddings = []
+            for record in batch_data:
+                try:
+                    # เรียก API สร้าง embedding
+                    response = requests.post(
+                        EMBEDDING_API_URL,
+                        json={
+                            "model": EMBEDDING_MODEL,
+                            "prompt": str(record[1])  # name column
+                        },
+                        timeout=30
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        if "embedding" in result:
+                            batch_embeddings.append({
+                                "id": record[0],
+                                "name": record[1],
+                                "embedding": result["embedding"]
+                            })
+                            success_count += 1
+                        else:
+                            error_count += 1
+                    else:
+                        error_count += 1
+                        
+                except Exception as e:
+                    error_count += 1
+            
+            # บันทึก batch นี้ลง database
+            if batch_embeddings:
+                with st.session_state.db_manager.engine.begin() as conn:
+                    for item in batch_embeddings:
+                        try:
+                            vector_array = np.array(item["embedding"], dtype=np.float32)
+                            vector_bytes = vector_array.tobytes()
+                            
+                            conn.execute(
+                                text(f"""
+                                    INSERT INTO {embedding_table} (id, name, embedding, metadata)
+                                    VALUES (:id, :name, :embedding, :metadata)
+                                    ON DUPLICATE KEY UPDATE
+                                      name = VALUES(name),
+                                      embedding = VALUES(embedding),
+                                      metadata = VALUES(metadata)
+                                """),
+                                {
+                                    "id": item["id"],
+                                    "name": item["name"][:255],
+                                    "embedding": vector_bytes,
+                                    "metadata": json.dumps({"original_id": item["id"]})
+                                }
+                            )
+                        except Exception as e:
+                            st.error(f"Error saving embedding: {str(e)}")
+            
+            # อัพเดท progress
+            progress = min((i + batch_size) / len(data), 1.0)
+            progress_bar.progress(progress)
+            status_text.text(f"ประมวลผล: {min(i + batch_size, len(data))}/{len(data)} (✅ {success_count}, ❌ {error_count})")
+        
+        # แสดงผลสรุป
+        progress_bar.empty()
+        status_text.empty()
+        
+        st.markdown(f"""
+        <div class="success-box">
+            <h3>🎉 Embedding Process เสร็จสิ้น!</h3>
+            <p>✅ สำเร็จ: {success_count:,} records</p>
+            <p>❌ ผิดพลาด: {error_count:,} records</p>
+            <p>📊 บันทึกใน table: {embedding_table}</p>
         </div>
         """, unsafe_allow_html=True)
         
-        st.markdown("""
-        <div class="sidebar-section">
-            <h3>📋 เมนูหลัก</h3>
-        </div>
-        """, unsafe_allow_html=True)
-    
+    except Exception as e:
+        st.error(f"❌ เกิดข้อผิดพลาดในการสร้าง embeddings: {str(e)}")
+
+def main():
     # Header
     st.markdown("""
     <div class="main-header">
@@ -738,58 +773,43 @@ def main():
         st.markdown("""
         <div class="error-box">
             <h3>❌ ไม่สามารถเชื่อมต่อ Database ได้</h3>
-            <p>กรุณาตรวจสอบการตั้งค่า TIDB_URL ใน environment variables</p>
+            <p>กรุณาตรวจสอบการตั้งค่า TIDB_URL ใน environment variables หรือ Streamlit secrets</p>
         </div>
         """, unsafe_allow_html=True)
         return
     
     # Sidebar menu
-    menu_option = st.sidebar.radio(
-        "",  # ไม่ต้องมี label เพราะเรามี custom header แล้ว
-        ["🆕 สร้าง Table ใหม่", "📋 เลือก Table ที่มีอยู่", "📁 Upload CSV File", "🤖 Run Embedding Process"],
-        label_visibility="collapsed"
-    )
-    
-    # System Status
     with st.sidebar:
         st.markdown("""
-        <div class="sidebar-section">
-            <h3>📊 สถานะระบบ</h3>
+        <div style="text-align: center; padding: 2rem 1rem 1rem; margin-bottom: 1rem; border-bottom: 1px solid rgba(59, 130, 246, 0.2);">
+            <h1 style="background: linear-gradient(45deg, #3b82f6, #06b6d4, #0ea5e9); background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 1.5rem; font-weight: 800; margin: 0;">🚀 NTOneEmbedding</h1>
+            <p style="color: rgba(255, 255, 255, 0.7); font-size: 0.8rem; margin: 0.5rem 0 0 0;">AI/ML Data Management System</p>
         </div>
         """, unsafe_allow_html=True)
         
+        menu_option = st.radio(
+            "เลือกเมนู:",
+            ["🆕 สร้าง Table ใหม่", "📋 เลือก Table ที่มีอยู่", "📁 Upload CSV File", "🤖 Run Embedding Process"]
+        )
+        
+        # System Status
+        st.markdown("---")
+        st.markdown("### 📊 สถานะระบบ")
+        
         # แสดงสถานะการเชื่อมต่อ
         if st.session_state.db_manager.engine:
-            st.markdown("""
-            <div class="embedding-status">
-                <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
-                    <span class="status-indicator status-complete"></span>
-                    <span style="color: #10b981; font-weight: 600;">Database เชื่อมต่อแล้ว</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.success("✅ Database เชื่อมต่อแล้ว")
         else:
-            st.markdown("""
-            <div class="embedding-status">
-                <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
-                    <span class="status-indicator status-waiting"></span>
-                    <span style="color: #ef4444; font-weight: 600;">Database ยังไม่เชื่อมต่อ</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.error("❌ Database ยังไม่เชื่อมต่อ")
         
         # แสดงจำนวน tables
         try:
             tables = st.session_state.db_manager.get_existing_tables()
-            st.markdown(f"""
-            <div class="metric-card" style="margin: 1rem 0; padding: 1rem;">
-                <h3 style="color: #3b82f6; margin: 0; font-size: 1.2rem;">{len(tables)}</h3>
-                <p style="margin: 0.25rem 0 0 0; color: #64748b; font-size: 0.8rem;">📋 Tables ทั้งหมด</p>
-            </div>
-            """, unsafe_allow_html=True)
+            st.metric("📋 Tables ทั้งหมด", len(tables))
         except:
-            pass
+            st.metric("📋 Tables ทั้งหมด", "N/A")
     
+    # Main content
     if menu_option == "🆕 สร้าง Table ใหม่":
         show_create_table_interface()
     elif menu_option == "📋 เลือก Table ที่มีอยู่":
@@ -798,3 +818,6 @@ def main():
         show_upload_csv_interface()
     elif menu_option == "🤖 Run Embedding Process":
         show_embedding_interface()
+
+if __name__ == "__main__":
+    main()
