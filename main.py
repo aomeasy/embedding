@@ -9,12 +9,16 @@ import signal
 import sys
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import ArgumentError
-from dotenv import load_dotenv
 from datetime import date
 from contextlib import contextmanager
 
 # โหลดค่าจาก environment variables
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # ถ้าไม่มี python-dotenv ก็ไม่เป็นไร (สำหรับ production)
+    pass
 
 # --- Config ---
 TIDB_URL = os.getenv("TIDB_URL")
@@ -99,6 +103,18 @@ def check_environment():
     print_status("info", f"Raw TIDB_URL = {repr(TIDB_URL)}")
     
     if TIDB_URL:
+        # ซ่อนรหัสผ่านในการแสดงผล
+        safe_url = TIDB_URL
+        if '@' in safe_url:
+            parts = safe_url.split('@')
+            if '://' in parts[0]:
+                protocol_user = parts[0].split('://')
+                if ':' in protocol_user[1]:
+                    user, password = protocol_user[1].split(':', 1)
+                    safe_url = f"{protocol_user[0]}://{user}:***@{parts[1]}"
+        
+        print_status("info", f"Sanitized TIDB_URL = {safe_url}")
+        
         encoded_url = base64.b64encode(TIDB_URL.encode()).decode()
         print_status("info", f"Base64 of TIDB_URL = {encoded_url[:50]}...")
     else:
@@ -417,6 +433,47 @@ def verify_results(embedding_table_name):
     except Exception as e:
         print_status("error", f"Verification failed: {e}")
 
+def test_embedding_api():
+    """ทดสอบการเชื่อมต่อ Embedding API"""
+    print_status("running", "Testing Embedding API connection...")
+    
+    try:
+        test_payload = {
+            "model": EMBEDDING_MODEL,
+            "prompt": "test embedding"
+        }
+        
+        response = requests.post(
+            EMBEDDING_API_URL, 
+            json=test_payload, 
+            timeout=30,
+            headers={"Content-Type": "application/json"}
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if "embedding" in result and result["embedding"]:
+                embedding_dim = len(result["embedding"])
+                print_status("success", f"API connection successful! Embedding dimension: {embedding_dim}")
+                return True
+            else:
+                print_status("error", "API returned invalid response format")
+                return False
+        else:
+            print_status("error", f"API returned status code: {response.status_code}")
+            print_status("error", f"Response: {response.text}")
+            return False
+            
+    except requests.exceptions.Timeout:
+        print_status("error", "API request timeout")
+        return False
+    except requests.exceptions.ConnectionError:
+        print_status("error", f"Cannot connect to API at {EMBEDDING_API_URL}")
+        return False
+    except Exception as e:
+        print_status("error", f"API test failed: {e}")
+        return False
+
 def main():
     """Main function"""
     print_header("AI/ML Data Management System - CLI Version")
@@ -433,6 +490,13 @@ def main():
         if not test_database_connection():
             sys.exit(1)
         
+        # ทดสอบ Embedding API
+        if not test_embedding_api():
+            print_status("warning", "Embedding API test failed. Process may fail later.")
+            response = input("Continue anyway? (y/N): ")
+            if response.lower() != 'y':
+                sys.exit(1)
+        
         # ตรวจสอบ tables
         table_info = get_suitable_tables()
         if not table_info:
@@ -444,9 +508,19 @@ def main():
             source_table = list(table_info.keys())[0]
             print_status("info", f"Using table: {source_table}")
         else:
-            print_status("info", f"Multiple suitable tables found: {list(table_info.keys())}")
-            source_table = list(table_info.keys())[0]  # ใช้ตัวแรก
-            print_status("info", f"Using first table: {source_table}")
+            print_status("info", f"Multiple suitable tables found:")
+            for i, table in enumerate(table_info.keys(), 1):
+                count = table_info[table]['count']
+                print_status("info", f"  {i}. {table} ({count:,} records)")
+            
+            try:
+                choice = input(f"Select table (1-{len(table_info)}): ")
+                table_index = int(choice) - 1
+                source_table = list(table_info.keys())[table_index]
+                print_status("info", f"Selected table: {source_table}")
+            except (ValueError, IndexError):
+                print_status("error", "Invalid selection")
+                sys.exit(1)
         
         # ตรวจสอบ existing embeddings
         existing_embedded_ids = get_existing_embeddings(source_table)
