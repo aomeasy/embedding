@@ -25,13 +25,18 @@ try:
     TIDB_URL = st.secrets.get("TIDB_URL") or os.environ.get("TIDB_URL")
     EMBEDDING_API_URL = st.secrets.get("EMBEDDING_API_URL") or os.environ.get("EMBEDDING_API_URL", "http://209.15.123.47:11434/api/embeddings")
     EMBEDDING_MODEL = st.secrets.get("EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL", "nomic-embed-text:latest")
+    # เพิ่ม API URL สำหรับ chat/generation
+    CHAT_API_URL = st.secrets.get("CHAT_API_URL") or os.environ.get("CHAT_API_URL", "http://209.15.123.47:11434/api/generate")
+    CHAT_MODEL = st.secrets.get("CHAT_MODEL") or os.environ.get("CHAT_MODEL", "llama3.1:latest")
 except:
     # Fallback สำหรับการรันใน local
     TIDB_URL = os.environ.get("TIDB_URL")
     EMBEDDING_API_URL = os.environ.get("EMBEDDING_API_URL", "http://209.15.123.47:11434/api/embeddings")
     EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text:latest")
+    CHAT_API_URL = os.environ.get("CHAT_API_URL", "http://209.15.123.47:11434/api/generate")
+    CHAT_MODEL = os.environ.get("CHAT_MODEL", "llama3.1:latest")
 
-# Modern CSS with Enhanced Sidebar and Dark/Neon Theme
+# Modern CSS with Enhanced Sidebar and Dark/Neon Theme (เหมือนเดิม)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
@@ -145,6 +150,37 @@ st.markdown("""
         box-shadow: 0 10px 30px rgba(59, 130, 246, 0.2), 0 0 0 1px rgba(59, 130, 246, 0.1);
     }
     
+    /* Chat Box Styles */
+    .chat-box {
+        background: linear-gradient(135deg, #312e81 0%, #3730a3 100%);
+        border: 1px solid #6366f1;
+        color: #e0e7ff;
+        padding: 1.5rem;
+        border-radius: 16px;
+        margin: 1rem 0;
+        box-shadow: 0 10px 30px rgba(99, 102, 241, 0.2), 0 0 0 1px rgba(99, 102, 241, 0.1);
+    }
+    
+    .user-message {
+        background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%);
+        border: 1px solid #3b82f6;
+        color: #dbeafe;
+        padding: 1rem;
+        border-radius: 12px;
+        margin: 0.5rem 0;
+        margin-left: 20%;
+    }
+    
+    .ai-message {
+        background: linear-gradient(135deg, #065f46 0%, #047857 100%);
+        border: 1px solid #10b981;
+        color: #d1fae5;
+        padding: 1rem;
+        border-radius: 12px;
+        margin: 0.5rem 0;
+        margin-right: 20%;
+    }
+    
     /* Buttons */
     .stButton > button {
         background: linear-gradient(135deg, #3b82f6 0%, #2563eb 50%, #1d4ed8 100%);
@@ -215,6 +251,43 @@ class DatabaseManager:
         except Exception as e:
             st.error(f"❌ ไม่สามารถดึงข้อมูลตัวอย่างได้: {str(e)}")
             return [], []
+    
+    def search_similar_vectors(self, table_name, query_vector, top_k=5):
+        """ค้นหา vectors ที่คล้ายกับ query vector โดยใช้ cosine similarity"""
+        try:
+            with self.engine.connect() as conn:
+                # ดึงข้อมูล embeddings ทั้งหมด
+                result = conn.execute(text(f"SELECT id, combined_text, embedding, metadata FROM {table_name}"))
+                
+                similarities = []
+                query_vector = np.array(query_vector, dtype=np.float32)
+                query_norm = np.linalg.norm(query_vector)
+                
+                for row in result.fetchall():
+                    try:
+                        # แปลง binary data กลับเป็น vector
+                        stored_vector = np.frombuffer(row[2], dtype=np.float32)
+                        stored_norm = np.linalg.norm(stored_vector)
+                        
+                        # คำนวณ cosine similarity
+                        if query_norm > 0 and stored_norm > 0:
+                            similarity = np.dot(query_vector, stored_vector) / (query_norm * stored_norm)
+                            similarities.append({
+                                'id': row[0],
+                                'text': row[1],
+                                'similarity': float(similarity),
+                                'metadata': json.loads(row[3]) if row[3] else {}
+                            })
+                    except Exception as e:
+                        continue
+                
+                # เรียงลำดับตาม similarity และคืนค่า top_k
+                similarities.sort(key=lambda x: x['similarity'], reverse=True)
+                return similarities[:top_k]
+                
+        except Exception as e:
+            st.error(f"❌ ไม่สามารถค้นหา similar vectors ได้: {str(e)}")
+            return []
 
     def create_new_table(self, table_name, columns_config):
         """สร้าง table ใหม่ตาม configuration ที่กำหนด"""
@@ -309,6 +382,217 @@ class DatabaseManager:
             st.error(f"❌ ไม่สามารถเพิ่มข้อมูลได้: {str(e)}")
             return 0, len(df), [str(e)]
 
+# เพิ่มฟังก์ชันสำหรับ AI Q&A
+def get_embedding_from_text(text):
+    """สร้าง embedding จากข้อความ"""
+    try:
+        response = requests.post(
+            EMBEDDING_API_URL,
+            json={
+                "model": EMBEDDING_MODEL,
+                "prompt": text
+            },
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if "embedding" in result:
+                return result["embedding"]
+    except Exception as e:
+        st.error(f"ไม่สามารถสร้าง embedding ได้: {str(e)}")
+    return None
+
+def generate_ai_response(prompt, context=""):
+    """เรียก AI API เพื่อตอบคำถาม"""
+    try:
+        full_prompt = f"""คุณเป็น AI ผู้ช่วยที่ฉลาดและมีประสิทธิภาพ กรุณาตอบคำถามอย่างละเอียดและครบถ้วน
+
+ข้อมูลบริบท:
+{context}
+
+คำถาม: {prompt}
+
+กรุณาตอบเป็นภาษาไทยอย่างชัดเจนและเป็นประโยชน์:"""
+
+        response = requests.post(
+            CHAT_API_URL,
+            json={
+                "model": CHAT_MODEL,
+                "prompt": full_prompt,
+                "stream": False
+            },
+            timeout=60
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result.get("response", "ไม่สามารถได้รับคำตอบได้")
+        else:
+            return f"ข้อผิดพลาด API: {response.status_code}"
+            
+    except Exception as e:
+        return f"เกิดข้อผิดพลาด: {str(e)}"
+
+def show_ai_qa_interface():
+    """แสดง interface สำหรับ AI Q&A"""
+    st.markdown("""
+    <div class="chat-box">
+        <h3>🤖 AI Question & Answer</h3>
+        <p>ถามคำถามกับ AI และค้นหาข้อมูลจากฐานข้อมูลของคุณ</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # เริ่มต้น chat history
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
+    
+    # เลือกโหมดการทำงาน
+    st.markdown("### ⚙️ ตั้งค่าการทำงาน")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        qa_mode = st.radio(
+            "เลือกโหมด:",
+            ["💬 Chat ธรรมดา", "🔍 Chat + ค้นหาข้อมูล"],
+            help="Chat ธรรมดา = ตอบจาก AI เท่านั้น, Chat + ค้นหา = ตอบพร้อมค้นหาข้อมูลจากฐานข้อมูล"
+        )
+    
+    with col2:
+        # เลือก embedding table สำหรับค้นหา (ถ้าเลือกโหมดค้นหา)
+        search_table = None
+        if qa_mode == "🔍 Chat + ค้นหาข้อมูล":
+            tables = st.session_state.db_manager.get_existing_tables()
+            embedding_tables = [t for t in tables if t.endswith('_vectors')]
+            
+            if embedding_tables:
+                search_table = st.selectbox(
+                    "เลือก Vector Table สำหรับค้นหา:",
+                    options=embedding_tables,
+                    help="เลือก table ที่มี embeddings เพื่อใช้ในการค้นหา"
+                )
+            else:
+                st.warning("⚠️ ยังไม่มี embedding tables")
+    
+    # แสดงประวัติการสนทนา
+    st.markdown("### 💬 การสนทนา")
+    
+    # สร้าง container สำหรับแสดงข้อความ
+    chat_container = st.container()
+    
+    with chat_container:
+        for i, chat in enumerate(st.session_state.chat_history):
+            if chat['type'] == 'user':
+                st.markdown(f"""
+                <div class="user-message">
+                    <strong>👤 คุณ:</strong><br>
+                    {chat['message']}
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class="ai-message">
+                    <strong>🤖 AI:</strong><br>
+                    {chat['message']}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # แสดงข้อมูลที่ค้นพบ (ถ้ามี)
+                if 'search_results' in chat and chat['search_results']:
+                    with st.expander("📊 ข้อมูลที่ค้นพบ"):
+                        for j, result in enumerate(chat['search_results']):
+                            st.text(f"🔍 ผลลัพธ์ {j+1} (คะแนน: {result['similarity']:.3f})")
+                            st.text(result['text'])
+                            st.markdown("---")
+    
+    # Input form สำหรับคำถามใหม่
+    st.markdown("### ❓ ถามคำถาม")
+    
+    with st.form("question_form"):
+        user_question = st.text_area(
+            "พิมพ์คำถามของคุณ:",
+            placeholder="เช่น: อธิบายเกี่ยวกับข้อมูลในระบบ หรือ หาข้อมูลเกี่ยวกับ...",
+            height=100
+        )
+        
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            submit_button = st.form_submit_button("🚀 ส่งคำถาม", type="primary")
+        with col2:
+            clear_button = st.form_submit_button("🗑️ ล้างประวัติ")
+        
+        if clear_button:
+            st.session_state.chat_history = []
+            st.rerun()
+    
+    # ประมวลผลคำถาม
+    if submit_button and user_question.strip():
+        # เพิ่มคำถามของผู้ใช้ใน history
+        st.session_state.chat_history.append({
+            'type': 'user',
+            'message': user_question,
+            'timestamp': datetime.now()
+        })
+        
+        # แสดงสถานะการประมวลผล
+        with st.spinner("🤔 AI กำลังคิด..."):
+            context = ""
+            search_results = []
+            
+            # ถ้าเป็นโหมดค้นหา และมี search_table
+            if qa_mode == "🔍 Chat + ค้นหาข้อมูล" and search_table:
+                # สร้าง embedding จากคำถาม
+                question_embedding = get_embedding_from_text(user_question)
+                
+                if question_embedding:
+                    # ค้นหาข้อมูลที่คล้ายกัน
+                    search_results = st.session_state.db_manager.search_similar_vectors(
+                        search_table, question_embedding, top_k=3
+                    )
+                    
+                    if search_results:
+                        # สร้าง context จากผลการค้นหา
+                        context_parts = []
+                        for result in search_results:
+                            context_parts.append(f"ข้อมูล (คะแนน {result['similarity']:.3f}): {result['text']}")
+                        context = "\n\n".join(context_parts)
+            
+            # เรียก AI เพื่อตอบคำถาม
+            ai_response = generate_ai_response(user_question, context)
+            
+            # เพิ่มคำตอบใน history
+            chat_entry = {
+                'type': 'ai',
+                'message': ai_response,
+                'timestamp': datetime.now()
+            }
+            
+            if search_results:
+                chat_entry['search_results'] = search_results
+            
+            st.session_state.chat_history.append(chat_entry)
+        
+        # รีเฟรชหน้าเพื่อแสดงคำตอบ
+        st.rerun()
+    
+    # แสดงสถิติ
+    if st.session_state.chat_history:
+        st.markdown("---")
+        st.markdown("### 📊 สถิติการสนทนา")
+        
+        user_messages = len([c for c in st.session_state.chat_history if c['type'] == 'user'])
+        ai_messages = len([c for c in st.session_state.chat_history if c['type'] == 'ai'])
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("👤 คำถามทั้งหมด", user_messages)
+        with col2:
+            st.metric("🤖 คำตอบทั้งหมด", ai_messages)
+        with col3:
+            if st.session_state.chat_history:
+                last_chat = st.session_state.chat_history[-1]['timestamp']
+                st.metric("🕒 สนทนาล่าสุด", last_chat.strftime("%H:%M:%S"))
+
 def generate_csv_template(table_name, db_manager):
     """สร้าง CSV template สำหรับ table ที่เลือก"""
     try:
@@ -346,7 +630,8 @@ def check_api_status():
     """ตรวจสอบสถานะ API และ Server"""
     status = {
         'database': {'status': False, 'message': '', 'color': 'red'},
-        'embedding_api': {'status': False, 'message': '', 'color': 'red'}
+        'embedding_api': {'status': False, 'message': '', 'color': 'red'},
+        'chat_api': {'status': False, 'message': '', 'color': 'red'}
     }
     
     # ตรวจสอบ Database
@@ -385,6 +670,31 @@ def check_api_status():
         status['embedding_api']['message'] = "ไม่สามารถเชื่อมต่อ"
     except Exception as e:
         status['embedding_api']['message'] = f"ข้อผิดพลาด: {str(e)[:20]}..."
+    
+    # ตรวจสอบ Chat API
+    try:
+        test_payload = {
+            "model": CHAT_MODEL,
+            "prompt": "test",
+            "stream": False
+        }
+        response = requests.post(CHAT_API_URL, json=test_payload, timeout=5)
+        if response.status_code == 200:
+            result = response.json()
+            if "response" in result:
+                status['chat_api']['status'] = True
+                status['chat_api']['message'] = "API พร้อมใช้งาน"
+                status['chat_api']['color'] = 'green'
+            else:
+                status['chat_api']['message'] = "API ตอบสนองผิดปกติ"
+        else:
+            status['chat_api']['message'] = f"HTTP {response.status_code}"
+    except requests.exceptions.Timeout:
+        status['chat_api']['message'] = "API Timeout"
+    except requests.exceptions.ConnectionError:
+        status['chat_api']['message'] = "ไม่สามารถเชื่อมต่อ"
+    except Exception as e:
+        status['chat_api']['message'] = f"ข้อผิดพลาด: {str(e)[:20]}..."
     
     return status
 
@@ -1017,7 +1327,7 @@ def main():
         
         menu_option = st.radio(
             "เลือกเมนู:",
-            ["🆕 สร้าง Table ใหม่", "📋 เลือก Table ที่มีอยู่", "📁 Upload CSV File", "🤖 Run Embedding Process"]
+            ["🆕 สร้าง Table ใหม่", "📋 เลือก Table ที่มีอยู่", "📁 Upload CSV File", "🤖 Run Embedding Process", "🧠 AI Question & Answer"]
         )
         
         # System Status - เพิ่มการแสดงสถานะ API
@@ -1073,6 +1383,30 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         
+        # แสดงสถานะ Chat API
+        if api_status['chat_api']['status']:
+            st.markdown(f"""
+            <div style="display: flex; align-items: center; padding: 0.5rem; background: linear-gradient(135deg, #065f46, #047857); border-radius: 8px; margin-bottom: 0.5rem;">
+                <span style="color: #10b981; margin-right: 0.5rem;">●</span>
+                <div>
+                    <div style="color: #d1fae5; font-weight: 600; font-size: 0.9rem;">Chat API</div>
+                    <div style="color: #a7f3d0; font-size: 0.8rem;">{api_status['chat_api']['message']}</div>
+                    <div style="color: #6ee7b7; font-size: 0.7rem;">Model: {CHAT_MODEL}</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div style="display: flex; align-items: center; padding: 0.5rem; background: linear-gradient(135deg, #7f1d1d, #991b1b); border-radius: 8px; margin-bottom: 0.5rem;">
+                <span style="color: #ef4444; margin-right: 0.5rem;">●</span>
+                <div>
+                    <div style="color: #fecaca; font-weight: 600; font-size: 0.9rem;">Chat API</div>
+                    <div style="color: #fca5a5; font-size: 0.8rem;">{api_status['chat_api']['message']}</div>
+                    <div style="color: #f87171; font-size: 0.7rem;">Server: {CHAT_API_URL}</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
         # แสดงข้อมูลเพิ่มเติม
         st.markdown("---")
         st.markdown("### 📈 ข้อมูลระบบ")
@@ -1085,9 +1419,14 @@ def main():
             # แสดงจำนวน embedding tables
             embedding_tables = [t for t in tables if t.endswith('_vectors')]
             st.metric("🤖 Embedding Tables", len(embedding_tables))
+            
+            # แสดงจำนวนข้อความใน chat history
+            chat_count = len(st.session_state.get('chat_history', []))
+            st.metric("💬 Chat Messages", chat_count)
         except:
             st.metric("📋 Tables ทั้งหมด", "N/A")
             st.metric("🤖 Embedding Tables", "N/A")
+            st.metric("💬 Chat Messages", "N/A")
     
     # Main content
     if menu_option == "🆕 สร้าง Table ใหม่":
@@ -1098,6 +1437,8 @@ def main():
         show_upload_csv_interface()
     elif menu_option == "🤖 Run Embedding Process":
         show_embedding_interface()
+    elif menu_option == "🧠 AI Question & Answer":
+        show_ai_qa_interface()
 
 if __name__ == "__main__":
     main()
