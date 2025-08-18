@@ -196,6 +196,52 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ===== Helpers for CSV -> Table (ใหม่) =====
+def _sanitize_identifier(name: str) -> str:
+    """แปลงชื่อ table/column ให้ปลอดภัย: เป็น snake_case และมีแต่ a-z0-9_"""
+    import re
+    if not isinstance(name, str):
+        name = str(name)
+    name = name.strip()
+    name = re.sub(r"[^\w]+", "_", name, flags=re.UNICODE)
+    name = name.strip("_").lower()
+    if not name:
+        name = "col"
+    return name[:64]
+
+def _infer_sqlalchemy_type_from_series(s: pd.Series):
+    """เดา SQLAlchemy type จาก pandas Series"""
+    # ลอง datetime
+    try:
+        s_dt = pd.to_datetime(s, errors='coerce', utc=True)
+        if s_dt.notna().mean() > 0.8:
+            return DateTime
+    except Exception:
+        pass
+
+    # ตัวเลข
+    s_num = pd.to_numeric(s, errors='coerce')
+    if s_num.notna().mean() > 0.9:
+        if (s_num.dropna() % 1 != 0).any():
+            return Float
+        else:
+            return Integer
+
+    # boolean แบบข้อความ
+    vals = s.dropna().astype(str).str.lower().unique().tolist()
+    if set(vals).issubset({"true", "false", "0", "1", "yes", "no"}):
+        return Integer  # เก็บเป็น 0/1
+
+    # string: ประเมินความยาว
+    try:
+        max_len = int(s.dropna().astype(str).str.len().max())
+        if max_len and max_len > 255:
+            return Text
+        else:
+            return String(255)
+    except Exception:
+        return String(255)
+
 class DatabaseManager:
     def __init__(self):
         self.engine = None
@@ -256,7 +302,6 @@ class DatabaseManager:
         """ค้นหา vectors ที่คล้ายกับ query vector โดยใช้ cosine similarity"""
         try:
             with self.engine.connect() as conn:
-                # ดึงข้อมูล embeddings ทั้งหมด
                 result = conn.execute(text(f"SELECT id, combined_text, embedding, metadata FROM {table_name}"))
                 
                 similarities = []
@@ -265,11 +310,9 @@ class DatabaseManager:
                 
                 for row in result.fetchall():
                     try:
-                        # แปลง binary data กลับเป็น vector
                         stored_vector = np.frombuffer(row[2], dtype=np.float32)
                         stored_norm = np.linalg.norm(stored_vector)
                         
-                        # คำนวณ cosine similarity
                         if query_norm > 0 and stored_norm > 0:
                             similarity = np.dot(query_vector, stored_vector) / (query_norm * stored_norm)
                             similarities.append({
@@ -281,7 +324,6 @@ class DatabaseManager:
                     except Exception as e:
                         continue
                 
-                # เรียงลำดับตาม similarity และคืนค่า top_k
                 similarities.sort(key=lambda x: x['similarity'], reverse=True)
                 return similarities[:top_k]
                 
@@ -290,14 +332,10 @@ class DatabaseManager:
             return []
 
     def create_new_table(self, table_name, columns_config):
-        """สร้าง table ใหม่ตาม configuration ที่กำหนด"""
+        """สร้าง table ใหม่ตาม configuration ที่กำหนด (โหมดกำหนดเอง)"""
         try:
             metadata = MetaData()
-            
-            # สร้าง columns ตาม config
             table_columns = []
-            
-            # เพิ่ม ID column เป็น primary key ก่อนเสมอ
             table_columns.append(Column('id', Integer, primary_key=True, autoincrement=True))
             
             for col_config in columns_config:
@@ -305,7 +343,6 @@ class DatabaseManager:
                 col_type = col_config['type']
                 col_nullable = col_config['nullable']
                 
-                # ป้องกันการสร้าง id column ซ้ำ
                 if col_name.lower() == 'id':
                     continue
                 
@@ -319,6 +356,8 @@ class DatabaseManager:
                     column = Column(col_name, Float, nullable=col_nullable)
                 elif col_type == 'DateTime':
                     column = Column(col_name, DateTime, nullable=col_nullable)
+                else:
+                    column = Column(col_name, String(255), nullable=col_nullable)
                 
                 table_columns.append(column)
             
@@ -330,14 +369,96 @@ class DatabaseManager:
             st.error(f"❌ ไม่สามารถสร้าง table {table_name} ได้: {str(e)}")
             return False
 
+    # ====== เพิ่มใหม่: สร้างตารางจาก DataFrame (CSV) ======
+    def create_table_from_dataframe(self, table_name, df, add_id_pk=True, dtype_overrides=None, nullables=None):
+        """
+        สร้างตารางจาก DataFrame:
+        - table_name: ชื่อ table (จะ sanitize ให้อีกชั้น)
+        - df: pandas DataFrame (ใช้ชื่อคอลัมน์ต้นฉบับ)
+        - add_id_pk: เพิ่มคอลัมน์ id PK auto-increment
+        - dtype_overrides: dict[original_col_name] -> SQLAlchemy type (String(255)/Text/Integer/Float/DateTime)
+        - nullables: dict[original_col_name] -> True/False
+        """
+        try:
+            safe_table_name = _sanitize_identifier(table_name)
+            metadata = MetaData()
+            columns = []
+
+            if add_id_pk:
+                columns.append(Column('id', Integer, primary_key=True, autoincrement=True))
+
+            dtype_overrides = dtype_overrides or {}
+            nullables = nullables or {}
+
+            # เตรียมชื่อคอลัมน์ที่ปลอดภัย และ map กลับ
+            safe_cols = []
+            name_map = {}  # original -> safe
+            for c in df.columns:
+                safe_c = _sanitize_identifier(c)
+                base, i = safe_c, 1
+                while safe_c in safe_cols or (add_id_pk and safe_c == 'id'):
+                    safe_c = f"{base}_{i}"
+                    i += 1
+                safe_cols.append(safe_c)
+                name_map[c] = safe_c
+
+            # สร้าง Columns ตามชนิด (ใช้ overrides ถ้ามี ไม่งั้นเดา)
+            for original_c in df.columns:
+                safe_c = name_map[original_c]
+                if add_id_pk and safe_c == 'id':
+                    continue
+
+                # ตีความชนิด
+                if original_c in dtype_overrides and dtype_overrides[original_c]:
+                    sa_type = dtype_overrides[original_c]
+                else:
+                    sa_type = _infer_sqlalchemy_type_from_series(df[original_c])
+
+                is_nullable = nullables.get(original_c, True)
+
+                if hasattr(sa_type, 'length') or sa_type in [Text, Integer, Float, DateTime]:
+                    columns.append(Column(safe_c, sa_type, nullable=is_nullable))
+                else:
+                    # หากเป็น class เช่น String/Integer
+                    if getattr(sa_type, "__name__", "") == 'String':
+                        columns.append(Column(safe_c, String(255), nullable=is_nullable))
+                    else:
+                        columns.append(Column(safe_c, sa_type(), nullable=is_nullable))
+
+            table = Table(safe_table_name, metadata, *columns)
+            metadata.create_all(self.engine)
+            return True, safe_table_name, name_map
+        except Exception as e:
+            st.error(f"❌ ไม่สามารถสร้าง table จาก CSV ได้: {str(e)}")
+            return False, None, {}
+
+    def bulk_insert_dataframe(self, table_name, df, add_id_pk=True, name_map=None):
+        """
+        นำเข้าข้อมูล df ลง table แบบ bulk (ใช้ to_sql)
+        - หาก add_id_pk=True ให้ไม่พยายามเขียนลงคอลัมน์ id
+        - name_map: map จากชื่อคอลัมน์ต้นฉบับ -> ชื่อคอลัมน์ในตาราง (ปลอดภัยแล้ว)
+        """
+        try:
+            df_to_write = df.copy()
+            if name_map:
+                df_to_write.columns = [name_map.get(c, c) for c in df.columns]
+            if add_id_pk and 'id' in df_to_write.columns:
+                df_to_write = df_to_write.drop(columns=['id'])
+
+            df_to_write = df_to_write.where(pd.notna(df_to_write), None)
+            df_to_write.to_sql(table_name, con=self.engine, if_exists='append', index=False, chunksize=500)
+            return True, len(df_to_write)
+        except Exception as e:
+            st.error(f"❌ นำเข้าข้อมูลล้มเหลว: {str(e)}")
+            return False, 0
+
     def insert_data_from_csv(self, table_name, df):
-        """เพิ่มข้อมูลจาก DataFrame เข้า table"""
+        """เพิ่มข้อมูลจาก DataFrame เข้า table (เมนู Upload CSV เดิม)"""
         try:
             success_count = 0
             error_count = 0
             errors = []
             
-            # สร้าง progress bar
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -346,15 +467,11 @@ class DatabaseManager:
             with self.engine.begin() as conn:
                 for index, row in df.iterrows():
                     try:
-                        # แปลงข้อมูลให้เป็น dict และกรองเฉพาะ columns ที่ไม่ใช่ id
                         row_dict = {k: v for k, v in row.to_dict().items() if k.lower() != 'id'}
-                        
-                        # จัดการข้อมูล NaN และ None
                         for key, value in row_dict.items():
                             if pd.isna(value):
                                 row_dict[key] = None
                         
-                        # สร้าง SQL insert statement (ไม่รวม id เพราะเป็น AUTO_INCREMENT)
                         columns = ', '.join(row_dict.keys())
                         placeholders = ', '.join([f':{key}' for key in row_dict.keys()])
                         
@@ -367,12 +484,10 @@ class DatabaseManager:
                         error_count += 1
                         errors.append(f"แถวที่ {index + 1}: {str(e)}")
                     
-                    # อัพเดท progress
                     progress = (index + 1) / total_rows
                     progress_bar.progress(progress)
                     status_text.text(f"กำลังประมวลผล: {index + 1}/{total_rows}")
             
-            # แสดงผลสรุป
             progress_bar.empty()
             status_text.empty()
             
@@ -443,11 +558,9 @@ def show_ai_qa_interface():
     </div>
     """, unsafe_allow_html=True)
     
-    # เริ่มต้น chat history
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
     
-    # เลือกโหมดการทำงาน
     st.markdown("### ⚙️ ตั้งค่าการทำงาน")
     
     col1, col2 = st.columns(2)
@@ -459,7 +572,6 @@ def show_ai_qa_interface():
         )
     
     with col2:
-        # เลือก embedding table สำหรับค้นหา (ถ้าเลือกโหมดค้นหา)
         search_table = None
         if qa_mode == "🔍 Chat + ค้นหาข้อมูล":
             tables = st.session_state.db_manager.get_existing_tables()
@@ -474,10 +586,7 @@ def show_ai_qa_interface():
             else:
                 st.warning("⚠️ ยังไม่มี embedding tables")
     
-    # แสดงประวัติการสนทนา
     st.markdown("### 💬 การสนทนา")
-    
-    # สร้าง container สำหรับแสดงข้อความ
     chat_container = st.container()
     
     with chat_container:
@@ -497,7 +606,6 @@ def show_ai_qa_interface():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # แสดงข้อมูลที่ค้นพบ (ถ้ามี)
                 if 'search_results' in chat and chat['search_results']:
                     with st.expander("📊 ข้อมูลที่ค้นพบ"):
                         for j, result in enumerate(chat['search_results']):
@@ -505,7 +613,6 @@ def show_ai_qa_interface():
                             st.text(result['text'])
                             st.markdown("---")
     
-    # Input form สำหรับคำถามใหม่
     st.markdown("### ❓ ถามคำถาม")
     
     with st.form("question_form"):
@@ -525,42 +632,33 @@ def show_ai_qa_interface():
             st.session_state.chat_history = []
             st.rerun()
     
-    # ประมวลผลคำถาม
     if submit_button and user_question.strip():
-        # เพิ่มคำถามของผู้ใช้ใน history
         st.session_state.chat_history.append({
             'type': 'user',
             'message': user_question,
             'timestamp': datetime.now()
         })
         
-        # แสดงสถานะการประมวลผล
         with st.spinner("🤔 AI กำลังคิด..."):
             context = ""
             search_results = []
             
-            # ถ้าเป็นโหมดค้นหา และมี search_table
             if qa_mode == "🔍 Chat + ค้นหาข้อมูล" and search_table:
-                # สร้าง embedding จากคำถาม
                 question_embedding = get_embedding_from_text(user_question)
                 
                 if question_embedding:
-                    # ค้นหาข้อมูลที่คล้ายกัน
                     search_results = st.session_state.db_manager.search_similar_vectors(
                         search_table, question_embedding, top_k=3
                     )
                     
                     if search_results:
-                        # สร้าง context จากผลการค้นหา
                         context_parts = []
                         for result in search_results:
                             context_parts.append(f"ข้อมูล (คะแนน {result['similarity']:.3f}): {result['text']}")
                         context = "\n\n".join(context_parts)
             
-            # เรียก AI เพื่อตอบคำถาม
             ai_response = generate_ai_response(user_question, context)
             
-            # เพิ่มคำตอบใน history
             chat_entry = {
                 'type': 'ai',
                 'message': ai_response,
@@ -572,10 +670,8 @@ def show_ai_qa_interface():
             
             st.session_state.chat_history.append(chat_entry)
         
-        # รีเฟรชหน้าเพื่อแสดงคำตอบ
         st.rerun()
     
-    # แสดงสถิติ
     if st.session_state.chat_history:
         st.markdown("---")
         st.markdown("### 📊 สถิติการสนทนา")
@@ -599,7 +695,6 @@ def generate_csv_template(table_name, db_manager):
         columns = db_manager.get_table_columns(table_name)
         column_names = [col['name'] for col in columns if col['name'].lower() != 'id']
         
-        # สร้าง sample data
         sample_data = {}
         for col in columns:
             if col['name'].lower() == 'id':
@@ -618,7 +713,6 @@ def generate_csv_template(table_name, db_manager):
             else:
                 sample_data[col_name] = f"ตัวอย่าง{col_name}"
         
-        # สร้าง DataFrame template
         template_df = pd.DataFrame([sample_data])
         return template_df, column_names
     
@@ -634,7 +728,6 @@ def check_api_status():
         'chat_api': {'status': False, 'message': '', 'color': 'red'}
     }
     
-    # ตรวจสอบ Database
     try:
         if st.session_state.db_manager and st.session_state.db_manager.engine:
             with st.session_state.db_manager.engine.connect() as conn:
@@ -647,12 +740,8 @@ def check_api_status():
     except Exception as e:
         status['database']['message'] = f"ข้อผิดพลาด: {str(e)[:30]}..."
     
-    # ตรวจสอบ Embedding API
     try:
-        test_payload = {
-            "model": EMBEDDING_MODEL,
-            "prompt": "test"
-        }
+        test_payload = {"model": EMBEDDING_MODEL, "prompt": "test"}
         response = requests.post(EMBEDDING_API_URL, json=test_payload, timeout=5)
         if response.status_code == 200:
             result = response.json()
@@ -671,13 +760,8 @@ def check_api_status():
     except Exception as e:
         status['embedding_api']['message'] = f"ข้อผิดพลาด: {str(e)[:20]}..."
     
-    # ตรวจสอบ Chat API
     try:
-        test_payload = {
-            "model": CHAT_MODEL,
-            "prompt": "test",
-            "stream": False
-        }
+        test_payload = {"model": CHAT_MODEL, "prompt": "test", "stream": False}
         response = requests.post(CHAT_API_URL, json=test_payload, timeout=5)
         if response.status_code == 200:
             result = response.json()
@@ -698,74 +782,184 @@ def check_api_status():
     
     return status
 
+# ================== แก้ฟังก์ชันนี้: เพิ่มแท็บ "สร้างจาก CSV" ==================
 def show_create_table_interface():
-    """แสดง interface สำหรับสร้าง table ใหม่"""
+    """แสดง interface สำหรับสร้าง table ใหม่ (กำหนดเอง / จาก CSV)"""
     st.markdown("""
     <div class="info-box">
         <h3>🆕 สร้าง Table ใหม่</h3>
         <p>สร้าง database table สำหรับเก็บข้อมูลของคุณ</p>
     </div>
     """, unsafe_allow_html=True)
-    
-    # Input สำหรับชื่อ table
-    table_name = st.text_input("🏷️ ชื่อ Table:", placeholder="เช่น users, products, etc.")
-    
-    if table_name:
-        st.markdown("### 📋 กำหนด Columns")
-        
-        # เก็บ columns configuration ใน session state
-        if f"columns_config_{table_name}" not in st.session_state:
-            st.session_state[f"columns_config_{table_name}"] = []
-        
-        # Form สำหรับเพิ่ม column
-        with st.form(f"add_column_{table_name}"):
-            col1, col2, col3 = st.columns([2, 2, 1])
-            
-            with col1:
-                col_name = st.text_input("Column Name")
-            with col2:
-                col_type = st.selectbox("Data Type", 
-                                      ["String", "Integer", "Float", "Text", "DateTime"])
-            with col3:
-                col_nullable = st.checkbox("Nullable", value=True)
-            
-            if st.form_submit_button("➕ เพิ่ม Column"):
-                if col_name:
-                    st.session_state[f"columns_config_{table_name}"].append({
-                        "name": col_name,
-                        "type": col_type,
-                        "nullable": col_nullable
-                    })
-                    st.success(f"เพิ่ม column '{col_name}' แล้ว")
-        
-        # แสดง columns ที่กำหนดแล้ว
-        if st.session_state[f"columns_config_{table_name}"]:
-            st.markdown("#### 📊 Columns ที่กำหนดแล้ว:")
-            
-            for i, col in enumerate(st.session_state[f"columns_config_{table_name}"]):
-                col_display1, col_display2 = st.columns([4, 1])
-                with col_display1:
-                    st.text(f"📌 {col['name']} ({col['type']}) - {'NULL' if col['nullable'] else 'NOT NULL'}")
-                with col_display2:
-                    if st.button("🗑️", key=f"remove_{table_name}_{i}"):
-                        st.session_state[f"columns_config_{table_name}"].pop(i)
-                        st.rerun()
-            
-            # ปุ่มสร้าง table
-            if st.button("🚀 สร้าง Table", type="primary"):
-                if st.session_state.db_manager.create_new_table(
-                    table_name, 
-                    st.session_state[f"columns_config_{table_name}"]
-                ):
-                    st.markdown(f"""
-                    <div class="success-box">
-                        <h3>✅ สร้าง Table สำเร็จ!</h3>
-                        <p>Table '{table_name}' ถูกสร้างเรียบร้อยแล้ว</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # รีเซ็ต configuration
-                    del st.session_state[f"columns_config_{table_name}"]
+
+    tab_manual, tab_csv = st.tabs(["🧩 กำหนด Columns เอง", "📁 สร้างจาก CSV"])
+
+    # --------- แท็บ 1: เดิม (กำหนดเอง) ---------
+    with tab_manual:
+        table_name = st.text_input("🏷️ ชื่อ Table:", placeholder="เช่น users, products, etc.", key="manual_table_name")
+
+        if table_name:
+            st.markdown("### 📋 กำหนด Columns")
+
+            if f"columns_config_{table_name}" not in st.session_state:
+                st.session_state[f"columns_config_{table_name}"] = []
+
+            with st.form(f"add_column_{table_name}"):
+                col1, col2, col3 = st.columns([2, 2, 1])
+                with col1:
+                    col_name = st.text_input("Column Name")
+                with col2:
+                    col_type = st.selectbox("Data Type",
+                                            ["String", "Integer", "Float", "Text", "DateTime"])
+                with col3:
+                    col_nullable = st.checkbox("Nullable", value=True)
+
+                if st.form_submit_button("➕ เพิ่ม Column"):
+                    if col_name:
+                        st.session_state[f"columns_config_{table_name}"].append({
+                            "name": col_name,
+                            "type": col_type,
+                            "nullable": col_nullable
+                        })
+                        st.success(f"เพิ่ม column '{col_name}' แล้ว")
+
+            if st.session_state[f"columns_config_{table_name}"]:
+                st.markdown("#### 📊 Columns ที่กำหนดแล้ว:")
+                for i, col in enumerate(st.session_state[f"columns_config_{table_name}"]):
+                    col_display1, col_display2 = st.columns([4, 1])
+                    with col_display1:
+                        st.text(f"📌 {col['name']} ({col['type']}) - {'NULL' if col['nullable'] else 'NOT NULL'}")
+                    with col_display2:
+                        if st.button("🗑️", key=f"remove_{table_name}_{i}"):
+                            st.session_state[f"columns_config_{table_name}"].pop(i)
+                            st.rerun()
+
+                if st.button("🚀 สร้าง Table", type="primary"):
+                    if st.session_state.db_manager.create_new_table(
+                        table_name,
+                        st.session_state[f"columns_config_{table_name}"]
+                    ):
+                        st.markdown(f"""
+                        <div class="success-box">
+                            <h3>✅ สร้าง Table สำเร็จ!</h3>
+                            <p>Table '{table_name}' ถูกสร้างเรียบร้อยแล้ว</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        del st.session_state[f"columns_config_{table_name}"]
+
+    # --------- แท็บ 2: สร้างจาก CSV ---------
+    with tab_csv:
+        st.info("อัปโหลดไฟล์ CSV → ตั้งชื่อ Table → ตรวจสอบชนิดข้อมูล → สร้างตาราง (เลือก import ข้อมูลได้)")
+
+        uploaded = st.file_uploader("📤 เลือกไฟล์ CSV", type=['csv'], key="csv_uploader_create")
+        if uploaded is not None:
+            try:
+                df_csv = pd.read_csv(uploaded)
+            except Exception as e:
+                st.error(f"อ่าน CSV ไม่ได้: {e}")
+                return
+
+            st.markdown("### 👁️ Preview")
+            st.dataframe(df_csv.head(20), use_container_width=True)
+
+            # ตั้งชื่อ table
+            raw_table_name = st.text_input("🏷️ ตั้งชื่อ Table ใหม่:", value=uploaded.name.replace(".csv", ""), key="csv_table_name")
+            add_pk = st.checkbox("เพิ่มคอลัมน์ id (AUTO_INCREMENT Primary Key)", value=True)
+            do_import = st.checkbox("Import ข้อมูลจาก CSV เข้าตารางทันที", value=True)
+
+            # เดา type เริ่มต้น + UI override
+            st.markdown("### 🧠 เดาชนิดข้อมูล (แก้ได้ก่อนสร้าง)")
+            type_choices = {
+                "String(255)": "String",
+                "Text": "Text",
+                "Integer": "Integer",
+                "Float": "Float",
+                "DateTime": "DateTime"
+            }
+
+            sess_key = f"csv_types_{raw_table_name}"
+            if sess_key not in st.session_state:
+                st.session_state[sess_key] = {}
+                st.session_state[sess_key+"_nullable"] = {}
+
+                for c in df_csv.columns:
+                    sa_t = _infer_sqlalchemy_type_from_series(df_csv[c])
+                    # แปลงเป็น label
+                    label = "String(255)"
+                    tname = str(sa_t)
+                    if hasattr(sa_t, "__name__"):
+                        tname = sa_t.__name__
+                    if tname.lower().startswith("string(") or tname.lower().startswith("string"):
+                        label = "String(255)"
+                    elif "text" in tname.lower():
+                        label = "Text"
+                    elif "integer" in tname.lower() or tname.lower() == "integer":
+                        label = "Integer"
+                    elif "float" in tname.lower() or tname.lower() == "float":
+                        label = "Float"
+                    elif "datetime" in tname.lower() or tname.lower() == "datetime":
+                        label = "DateTime"
+                    st.session_state[sess_key][c] = label
+                    st.session_state[sess_key+"_nullable"][c] = True
+
+            overrides = {}
+            nullables = {}
+            for c in df_csv.columns:
+                col1, col2, col3 = st.columns([3, 2, 1])
+                with col1:
+                    st.text_input("ชื่อคอลัมน์ (จากไฟล์)", value=str(c), key=f"name_{sess_key}_{c}", disabled=True)
+                with col2:
+                    st.session_state[sess_key][c] = st.selectbox(
+                        "ชนิดข้อมูล",
+                        options=list(type_choices.keys()),
+                        index=list(type_choices.keys()).index(st.session_state[sess_key][c]),
+                        key=f"type_{sess_key}_{c}"
+                    )
+                with col3:
+                    st.session_state[sess_key+"_nullable"][c] = st.checkbox(
+                        "Nullable",
+                        value=st.session_state[sess_key+"_nullable"][c],
+                        key=f"null_{sess_key}_{c}"
+                    )
+
+                label = st.session_state[sess_key][c]
+                if label == "String(255)":
+                    sa_type = String(255)
+                elif label == "Text":
+                    sa_type = Text
+                elif label == "Integer":
+                    sa_type = Integer
+                elif label == "Float":
+                    sa_type = Float
+                elif label == "DateTime":
+                    sa_type = DateTime
+                else:
+                    sa_type = String(255)
+
+                overrides[c] = sa_type
+                nullables[c] = st.session_state[sess_key+"_nullable"][c]
+
+            st.markdown("---")
+            if st.button("🚀 สร้างตารางจาก CSV", type="primary"):
+                if not raw_table_name.strip():
+                    st.error("กรุณาตั้งชื่อ Table")
+                else:
+                    ok, safe_table, name_map = st.session_state.db_manager.create_table_from_dataframe(
+                        raw_table_name, df_csv, add_id_pk=add_pk,
+                        dtype_overrides=overrides, nullables=nullables
+                    )
+                    if ok:
+                        st.success(f"✅ สร้างตาราง `{safe_table}` สำเร็จ!")
+                        if do_import:
+                            ok2, nrows = st.session_state.db_manager.bulk_insert_dataframe(
+                                safe_table, df_csv, add_id_pk=add_pk, name_map=name_map
+                            )
+                            if ok2:
+                                st.success(f"📥 นำเข้าข้อมูล {nrows:,} แถว ลง `{safe_table}` เรียบร้อย")
+                            else:
+                                st.warning("ตารางถูกสร้างแล้ว แต่นำเข้าข้อมูลไม่สำเร็จ")
+                        else:
+                            st.info("สร้างเฉพาะโครงสร้างตาราง (ยังไม่นำเข้าข้อมูล)")
 
 def show_select_table_interface():
     """แสดง interface สำหรับเลือก table ที่มีอยู่"""
@@ -782,11 +976,9 @@ def show_select_table_interface():
         selected_table = st.selectbox("🎯 เลือก Table:", options=tables)
         
         if selected_table:
-            # แสดงข้อมูล table
             columns = st.session_state.db_manager.get_table_columns(selected_table)
             data, column_names = st.session_state.db_manager.get_table_data_sample(selected_table)
             
-            # แสดง schema
             st.markdown(f"### 🏗️ Schema ของ {selected_table}")
             schema_data = []
             for col in columns:
@@ -798,7 +990,6 @@ def show_select_table_interface():
             
             st.dataframe(pd.DataFrame(schema_data), use_container_width=True)
             
-            # แสดงข้อมูลตัวอย่าง
             if data:
                 st.markdown(f"### 📊 ข้อมูลตัวอย่าง ({len(data)} แถว)")
                 sample_df = pd.DataFrame(data, columns=column_names)
@@ -822,14 +1013,12 @@ def show_upload_csv_interface():
     </div>
     """, unsafe_allow_html=True)
     
-    # เลือก table ที่จะ insert ข้อมูล
     tables = st.session_state.db_manager.get_existing_tables()
     
     if tables:
         target_table = st.selectbox("🎯 เลือก Target Table:", options=tables)
         
         if target_table:
-            # แสดงส่วน Template Download
             st.markdown("### 📋 ดาวน์โหลด CSV Template")
             
             col1, col2 = st.columns([2, 1])
@@ -841,7 +1030,6 @@ def show_upload_csv_interface():
                     template_df, column_names = generate_csv_template(target_table, st.session_state.db_manager)
                     
                     if template_df is not None:
-                        # แปลง DataFrame เป็น CSV
                         csv_data = template_df.to_csv(index=False, encoding='utf-8-sig')
                         
                         st.download_button(
@@ -854,24 +1042,20 @@ def show_upload_csv_interface():
                         
                         st.success("✅ Template พร้อมดาวน์โหลด!")
                         
-                        # แสดง preview template
                         st.markdown("#### 👁️ ตัวอย่าง Template:")
                         st.dataframe(template_df, use_container_width=True)
             
             st.markdown("---")
         
-        # Upload file section
         uploaded_file = st.file_uploader("📤 เลือกไฟล์ CSV", type=['csv'])
         
         if uploaded_file and target_table:
             try:
-                # อ่านไฟล์ CSV
                 df = pd.read_csv(uploaded_file)
                 
                 st.markdown(f"### 📊 ข้อมูลใน CSV ({len(df)} แถว)")
                 st.dataframe(df.head(10), use_container_width=True)
                 
-                # ตรวจสอบ columns
                 table_columns = st.session_state.db_manager.get_table_columns(target_table)
                 table_column_names = [col['name'] for col in table_columns]
                 
@@ -896,13 +1080,11 @@ def show_upload_csv_interface():
                     else:
                         st.info("🎯 พอดี")
                 
-                # แสดงรายละเอียด columns
                 if missing_columns:
                     st.warning(f"Columns ที่ไม่มีใน CSV: {', '.join(missing_columns)}")
                 if extra_columns:
                     st.info(f"Columns เพิ่มเติมใน CSV: {', '.join(extra_columns)}")
                 
-                # ปุ่ม import
                 if st.button("🚀 Import ข้อมูล", type="primary"):
                     with st.spinner("กำลัง import ข้อมูล..."):
                         success_count, error_count, errors = st.session_state.db_manager.insert_data_from_csv(
@@ -925,7 +1107,6 @@ def show_upload_csv_interface():
                         </div>
                         """, unsafe_allow_html=True)
                     
-                    # แสดง errors ถ้ามี
                     if errors and len(errors) <= 10:
                         st.error("Errors:")
                         for error in errors:
@@ -950,22 +1131,18 @@ def show_embedding_interface():
     </div>
     """, unsafe_allow_html=True)
     
-    # เลือก table สำหรับ embedding
     tables = st.session_state.db_manager.get_existing_tables()
     
     if tables:
         selected_table = st.selectbox("🎯 เลือก Table:", options=tables)
         
         if selected_table:
-            # ดึงข้อมูล columns ของ table ที่เลือก
             columns = st.session_state.db_manager.get_table_columns(selected_table)
             column_names = [col['name'] for col in columns]
             
-            # กรองเฉพาะ text columns
             text_columns = []
             for col in columns:
                 col_type = str(col['type']).lower()
-                # กรองเฉพาะ columns ที่เป็น text/string
                 if any(t in col_type for t in ['varchar', 'text', 'char', 'string']):
                     text_columns.append(col['name'])
             
@@ -997,21 +1174,17 @@ def show_embedding_interface():
                     selected_columns = [single_column] if single_column else []
                 
                 if selected_columns:
-                    # แสดงตัวอย่างการรวม text
                     st.markdown("### 🔍 ตัวอย่างการรวม Text")
                     
-                    # ตั้งค่าตัวคั่น
-                    separator = st.text_input("ตัวคั่นระหว่าง columns:", value=" | ", 
+                    separator = st.text_input("ตัวคั่นระหว่าง columns:", value=" | ",
                                             help="ข้อความที่ใช้คั่นระหว่าง columns")
                     
-                    # แสดงข้อมูล table ตัวอย่าง
                     data, column_names = st.session_state.db_manager.get_table_data_sample(selected_table)
                     
                     if data:
                         st.markdown(f"### 📊 ข้อมูลตัวอย่างจาก {selected_table}")
                         sample_df = pd.DataFrame(data, columns=column_names)
                         
-                        # สร้างตัวอย่างข้อความที่จะ embed
                         sample_df['🔗 Combined_Text_Preview'] = sample_df.apply(
                             lambda row: separator.join([
                                 str(row[col]) if pd.notna(row[col]) and str(row[col]).strip() else ""
@@ -1019,20 +1192,17 @@ def show_embedding_interface():
                             ]).strip(), axis=1
                         )
                         
-                        # แสดงเฉพาะ columns ที่สำคัญ
                         display_columns = ['id'] if 'id' in sample_df.columns else []
-                        display_columns.extend(selected_columns[:3])  # แสดงไม่เกิน 3 source columns
+                        display_columns.extend(selected_columns[:3])
                         display_columns.append('🔗 Combined_Text_Preview')
                         
                         st.dataframe(sample_df[display_columns], use_container_width=True)
                         
-                        # แสดงจำนวนข้อมูลทั้งหมด
                         try:
                             with st.session_state.db_manager.engine.connect() as conn:
                                 count_result = conn.execute(text(f"SELECT COUNT(*) FROM {selected_table}"))
                                 total_count = count_result.scalar()
                                 
-                                # ตรวจสอบ embedding table ที่มีอยู่
                                 embedding_table = f"{selected_table}_vectors"
                                 embed_count = 0
                                 try:
@@ -1053,7 +1223,6 @@ def show_embedding_interface():
                         except Exception as e:
                             st.error(f"ไม่สามารถดึงข้อมูลสถิติได้: {str(e)}")
                         
-                        # แสดงการตั้งค่า
                         st.markdown("### ⚙️ การตั้งค่า Embedding")
                         
                         col1, col2 = st.columns(2)
@@ -1063,7 +1232,6 @@ def show_embedding_interface():
                             max_records = st.number_input("จำนวดสูงสุดที่จะประมวลผล", 
                                                         min_value=1, max_value=10000, value=1000)
                         
-                        # ตัวเลือกเพิ่มเติม
                         st.markdown("### 🔧 ตัวเลือกขั้นสูง")
                         col1, col2 = st.columns(2)
                         with col1:
@@ -1074,14 +1242,12 @@ def show_embedding_interface():
                                                             min_value=100, max_value=8000, value=2000,
                                                             help="จำกัดความยาวข้อความเพื่อป้องกัน API error")
                         
-                        # แสดงข้อมูล API
                         st.markdown("### 🔗 API Configuration")
                         st.text(f"API URL: {EMBEDDING_API_URL}")
                         st.text(f"Model: {EMBEDDING_MODEL}")
                         st.text(f"Source Columns: {', '.join(selected_columns)}")
                         st.text(f"Separator: '{separator}'")
                         
-                        # ปุ่มเริ่มประมวลผล
                         if st.button("🚀 เริ่มสร้าง Embeddings", type="primary"):
                             run_embedding_process(
                                 selected_table, batch_size, max_records, 
@@ -1114,7 +1280,6 @@ def show_embedding_interface():
 def run_embedding_process(table_name, batch_size, max_records, source_columns, separator, skip_empty, max_text_length):
     """รันกระบวนการสร้าง embeddings จากหลาย columns"""
     try:
-        # สร้าง embedding table
         embedding_table = f"{table_name}_vectors"
         
         with st.session_state.db_manager.engine.connect() as conn:
@@ -1133,16 +1298,13 @@ def run_embedding_process(table_name, batch_size, max_records, source_columns, s
         
         st.success(f"✅ สร้าง table {embedding_table} เรียบร้อยแล้ว")
         
-        # ดึงข้อมูลที่ยังไม่ได้ embed
         with st.session_state.db_manager.engine.connect() as conn:
-            # ตรวจสอบ IDs ที่ embed แล้ว
             try:
                 embedded_result = conn.execute(text(f"SELECT id FROM {embedding_table}"))
                 embedded_ids = set(row[0] for row in embedded_result.fetchall())
             except:
                 embedded_ids = set()
             
-            # สร้าง SQL query สำหรับดึงข้อมูล
             columns_sql = ', '.join(source_columns)
             
             if embedded_ids:
@@ -1167,7 +1329,6 @@ def run_embedding_process(table_name, batch_size, max_records, source_columns, s
         
         st.info(f"🔄 กำลังประมวลผล {len(data):,} records จาก columns: {', '.join(source_columns)}")
         
-        # สร้าง progress tracking
         progress_bar = st.progress(0)
         status_text = st.empty()
         
@@ -1175,31 +1336,26 @@ def run_embedding_process(table_name, batch_size, max_records, source_columns, s
         error_count = 0
         skipped_count = 0
         
-        # ประมวลผลเป็น batch
         for i in range(0, len(data), batch_size):
             batch_data = data[i:i + batch_size]
             
-            # สร้าง embeddings สำหรับ batch นี้
             batch_embeddings = []
             for record in batch_data:
                 try:
-                    # รวม text จากหลาย columns
                     record_id = record[0]
                     text_parts = []
                     
                     for j, col_name in enumerate(source_columns):
-                        col_value = record[j + 1]  # +1 เพราะ index 0 คือ id
+                        col_value = record[j + 1]
                         if col_value is not None and str(col_value).strip():
                             text_parts.append(str(col_value).strip())
                     
                     combined_text = separator.join(text_parts)
                     
-                    # ตรวจสอบข้อความว่าง
                     if skip_empty and not combined_text.strip():
                         skipped_count += 1
                         continue
                     
-                    # จำกัดความยาวข้อความ
                     if len(combined_text) > max_text_length:
                         combined_text = combined_text[:max_text_length] + "..."
                     
@@ -1207,7 +1363,6 @@ def run_embedding_process(table_name, batch_size, max_records, source_columns, s
                         skipped_count += 1
                         continue
                     
-                    # เรียก API สร้าง embedding
                     response = requests.post(
                         EMBEDDING_API_URL,
                         json={
@@ -1235,7 +1390,6 @@ def run_embedding_process(table_name, batch_size, max_records, source_columns, s
                 except Exception as e:
                     error_count += 1
             
-            # บันทึก batch นี้ลง database
             if batch_embeddings:
                 with st.session_state.db_manager.engine.begin() as conn:
                     for item in batch_embeddings:
@@ -1255,7 +1409,7 @@ def run_embedding_process(table_name, batch_size, max_records, source_columns, s
                                 """),
                                 {
                                     "id": item["id"],
-                                    "combined_text": item["combined_text"][:1000],  # จำกัดในฐานข้อมูล
+                                    "combined_text": item["combined_text"][:1000],
                                     "source_columns": json.dumps(item["source_columns"]),
                                     "embedding": vector_bytes,
                                     "metadata": json.dumps({
@@ -1270,12 +1424,10 @@ def run_embedding_process(table_name, batch_size, max_records, source_columns, s
                         except Exception as e:
                             st.error(f"Error saving embedding: {str(e)}")
             
-            # อัพเดท progress
             progress = min((i + batch_size) / len(data), 1.0)
             progress_bar.progress(progress)
             status_text.text(f"ประมวลผล: {min(i + batch_size, len(data))}/{len(data)} (✅ {success_count}, ❌ {error_count}, ⏭️ {skipped_count})")
         
-        # แสดงผลสรุป
         progress_bar.empty()
         status_text.empty()
         
@@ -1330,14 +1482,11 @@ def main():
             ["🆕 สร้าง Table ใหม่", "📋 เลือก Table ที่มีอยู่", "📁 Upload CSV File", "🤖 Run Embedding Process", "🧠 AI Question & Answer"]
         )
         
-        # System Status - เพิ่มการแสดงสถานะ API
         st.markdown("---")
         st.markdown("### 📊 สถานะระบบ")
         
-        # ตรวจสอบสถานะ API
         api_status = check_api_status()
         
-        # แสดงสถานะ Database
         if api_status['database']['status']:
             st.markdown(f"""
             <div style="display: flex; align-items: center; padding: 0.5rem; background: linear-gradient(135deg, #065f46, #047857); border-radius: 8px; margin-bottom: 0.5rem;">
@@ -1359,7 +1508,6 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         
-        # แสดงสถานะ Embedding API
         if api_status['embedding_api']['status']:
             st.markdown(f"""
             <div style="display: flex; align-items: center; padding: 0.5rem; background: linear-gradient(135deg, #065f46, #047857); border-radius: 8px; margin-bottom: 0.5rem;">
@@ -1383,7 +1531,6 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         
-        # แสดงสถานะ Chat API
         if api_status['chat_api']['status']:
             st.markdown(f"""
             <div style="display: flex; align-items: center; padding: 0.5rem; background: linear-gradient(135deg, #065f46, #047857); border-radius: 8px; margin-bottom: 0.5rem;">
@@ -1400,27 +1547,22 @@ def main():
             <div style="display: flex; align-items: center; padding: 0.5rem; background: linear-gradient(135deg, #7f1d1d, #991b1b); border-radius: 8px; margin-bottom: 0.5rem;">
                 <span style="color: #ef4444; margin-right: 0.5rem;">●</span>
                 <div>
-                    <div style="color: #fecaca; font-weight: 600; font-size: 0.9rem;">Chat API</div>
                     <div style="color: #fca5a5; font-size: 0.8rem;">{api_status['chat_api']['message']}</div>
                     <div style="color: #f87171; font-size: 0.7rem;">Server: {CHAT_API_URL}</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
         
-        # แสดงข้อมูลเพิ่มเติม
         st.markdown("---")
         st.markdown("### 📈 ข้อมูลระบบ")
         
-        # แสดงจำนวน tables
         try:
             tables = st.session_state.db_manager.get_existing_tables()
             st.metric("📋 Tables ทั้งหมด", len(tables))
             
-            # แสดงจำนวน embedding tables
             embedding_tables = [t for t in tables if t.endswith('_vectors')]
             st.metric("🤖 Embedding Tables", len(embedding_tables))
             
-            # แสดงจำนวนข้อความใน chat history
             chat_count = len(st.session_state.get('chat_history', []))
             st.metric("💬 Chat Messages", chat_count)
         except:
@@ -1428,7 +1570,6 @@ def main():
             st.metric("🤖 Embedding Tables", "N/A")
             st.metric("💬 Chat Messages", "N/A")
     
-    # Main content
     if menu_option == "🆕 สร้าง Table ใหม่":
         show_create_table_interface()
     elif menu_option == "📋 เลือก Table ที่มีอยู่":
