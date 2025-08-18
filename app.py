@@ -562,7 +562,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h1>🗂️ ระบบ Embedding SQL Database</h1>
-        <p>จัดการ Tables, Import ข้อมูล CSV และสร้าง Vector Embeddings อย่างทันสมัย</p>
+        <p>จัดการ Tables, Import ข้อมูล CSV และสร้าง Vector Embeddings</p>
     </div>
     """, unsafe_allow_html=True)
     
