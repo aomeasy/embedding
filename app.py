@@ -885,214 +885,119 @@ def show_create_table_interface():
                         """, unsafe_allow_html=True)
                         del st.session_state[f"columns_config_{table_name}"]
 
-   
-   
-# --------- แท็บ 2: สร้างจาก CSV (แก้ไขเพิ่มการเลือกฟิลด์) ---------
-with tab_csv:
-    st.info("อัปโหลดไฟล์ CSV → เลือกฟิลด์ที่ต้องการ → ตั้งชื่อ Table → ตรวจสอบชนิดข้อมูล → สร้างตาราง (เลือก import ข้อมูลได้)")
+    # --------- แท็บ 2: สร้างจาก CSV ---------
+    with tab_csv:
+        st.info("อัปโหลดไฟล์ CSV → ตั้งชื่อ Table → ตรวจสอบชนิดข้อมูล → สร้างตาราง (เลือก import ข้อมูลได้)")
 
-    uploaded = st.file_uploader("📤 เลือกไฟล์ CSV", type=['csv'], key="csv_uploader_create")
-    if uploaded is not None:
-        try:
-            df_csv = pd.read_csv(uploaded)
-        except Exception as e:
-            st.error(f"อ่าน CSV ไม่ได้: {e}")
-        else:
-            st.markdown("### 👁️ Preview ข้อมูล CSV")
-            st.dataframe(df_csv.head(10), use_container_width=True)
+        uploaded = st.file_uploader("📤 เลือกไฟล์ CSV", type=['csv'], key="csv_uploader_create")
+        if uploaded is not None:
+            try:
+                df_csv = pd.read_csv(uploaded)
+            except Exception as e:
+                st.error(f"อ่าน CSV ไม่ได้: {e}")
+                return
 
-            # ส่วนใหม่: เลือกฟิลด์ที่ต้องการ
-            st.markdown("### 📋 เลือกฟิลด์ที่ต้องการนำเข้า")
-            
-            # สร้าง session key สำหรับเก็บการเลือกฟิลด์
-            field_selection_key = f"csv_field_selection_{uploaded.name}"
-            if field_selection_key not in st.session_state:
-                # เริ่มต้นเลือกทุกฟิลด์
-                st.session_state[field_selection_key] = {col: True for col in df_csv.columns}
+            st.markdown("### 👁️ Preview")
+            st.dataframe(df_csv.head(20), use_container_width=True)
 
-            # แสดงตัวเลือกฟิลด์ในรูปแบบ columns
-            st.markdown("**เลือกฟิลด์ที่ต้องการสร้างในตาราง:**")
-            
-            # แสดงในรูปแบบ 3 columns
-            cols = st.columns(3)
-            for i, column in enumerate(df_csv.columns):
-                with cols[i % 3]:
-                    st.session_state[field_selection_key][column] = st.checkbox(
-                        f"📌 **{column}**", 
-                        value=st.session_state[field_selection_key][column],
-                        key=f"field_{uploaded.name}_{column}",
-                        help=f"ชนิดข้อมูล: {str(df_csv[column].dtype)}"
+            # ตั้งชื่อ table
+            raw_table_name = st.text_input("🏷️ ตั้งชื่อ Table ใหม่:", value=uploaded.name.replace(".csv", ""), key="csv_table_name")
+            add_pk = st.checkbox("เพิ่มคอลัมน์ id (AUTO_INCREMENT Primary Key)", value=True)
+            do_import = st.checkbox("Import ข้อมูลจาก CSV เข้าตารางทันที", value=True)
+
+            # เดา type เริ่มต้น + UI override
+            st.markdown("### 🧠 เดาชนิดข้อมูล (แก้ได้ก่อนสร้าง)")
+            type_choices = {
+                "String(255)": "String",
+                "Text": "Text",
+                "Integer": "Integer",
+                "Float": "Float",
+                "DateTime": "DateTime"
+            }
+
+            sess_key = f"csv_types_{raw_table_name}"
+            if sess_key not in st.session_state:
+                st.session_state[sess_key] = {}
+                st.session_state[sess_key+"_nullable"] = {}
+
+                for c in df_csv.columns:
+                    sa_t = _infer_sqlalchemy_type_from_series(df_csv[c])
+                    # แปลงเป็น label
+                    label = "String(255)"
+                    tname = str(sa_t)
+                    if hasattr(sa_t, "__name__"):
+                        tname = sa_t.__name__
+                    if tname.lower().startswith("string(") or tname.lower().startswith("string"):
+                        label = "String(255)"
+                    elif "text" in tname.lower():
+                        label = "Text"
+                    elif "integer" in tname.lower() or tname.lower() == "integer":
+                        label = "Integer"
+                    elif "float" in tname.lower() or tname.lower() == "float":
+                        label = "Float"
+                    elif "datetime" in tname.lower() or tname.lower() == "datetime":
+                        label = "DateTime"
+                    st.session_state[sess_key][c] = label
+                    st.session_state[sess_key+"_nullable"][c] = True
+
+            overrides = {}
+            nullables = {}
+            for c in df_csv.columns:
+                col1, col2, col3 = st.columns([3, 2, 1])
+                with col1:
+                    st.text_input("ชื่อคอลัมน์ (จากไฟล์)", value=str(c), key=f"name_{sess_key}_{c}", disabled=True)
+                with col2:
+                    st.session_state[sess_key][c] = st.selectbox(
+                        "ชนิดข้อมูล",
+                        options=list(type_choices.keys()),
+                        index=list(type_choices.keys()).index(st.session_state[sess_key][c]),
+                        key=f"type_{sess_key}_{c}"
+                    )
+                with col3:
+                    st.session_state[sess_key+"_nullable"][c] = st.checkbox(
+                        "Nullable",
+                        value=st.session_state[sess_key+"_nullable"][c],
+                        key=f"null_{sess_key}_{c}"
                     )
 
-            # ปุ่มควบคุมการเลือก
-            col_select1, col_select2, col_select3 = st.columns(3)
-            with col_select1:
-                if st.button("✅ เลือกทั้งหมด", key=f"select_all_{uploaded.name}"):
-                    for col in df_csv.columns:
-                        st.session_state[field_selection_key][col] = True
-                    st.rerun()
-            with col_select2:
-                if st.button("❌ ไม่เลือกทั้งหมด", key=f"deselect_all_{uploaded.name}"):
-                    for col in df_csv.columns:
-                        st.session_state[field_selection_key][col] = False
-                    st.rerun()
-            with col_select3:
-                if st.button("🔄 กลับค่าเริ่มต้น", key=f"reset_{uploaded.name}"):
-                    for col in df_csv.columns:
-                        st.session_state[field_selection_key][col] = True
-                    st.rerun()
+                label = st.session_state[sess_key][c]
+                if label == "String(255)":
+                    sa_type = String(255)
+                elif label == "Text":
+                    sa_type = Text
+                elif label == "Integer":
+                    sa_type = Integer
+                elif label == "Float":
+                    sa_type = Float
+                elif label == "DateTime":
+                    sa_type = DateTime
+                else:
+                    sa_type = String(255)
 
-            # กรองเฉพาะฟิลด์ที่เลือก
-            selected_columns = [col for col, selected in st.session_state[field_selection_key].items() if selected]
-            
-            if not selected_columns:
-                st.error("⚠️ กรุณาเลือกอย่างน้อย 1 ฟิลด์")
-            else:
-                # แสดงฟิลด์ที่เลือก
-                st.markdown("### 📊 ฟิลด์ที่เลือก")
-                selected_info = f"**{len(selected_columns)}** ฟิลด์จากทั้งหมด **{len(df_csv.columns)}** ฟิลด์"
-                st.info(f"✅ {selected_info}: {', '.join(selected_columns)}")
+                overrides[c] = sa_type
+                nullables[c] = st.session_state[sess_key+"_nullable"][c]
 
-                # สร้าง DataFrame ที่มีเฉพาะฟิลด์ที่เลือก
-                df_filtered = df_csv[selected_columns].copy()
-                
-                # แสดง preview ของข้อมูลที่กรองแล้ว
-                st.markdown("### 👁️ Preview ข้อมูลที่เลือก")
-                st.dataframe(df_filtered.head(10), use_container_width=True)
-
-                # ตั้งชื่อ table
-                raw_table_name = st.text_input("🏷️ ตั้งชื่อ Table ใหม่:", value=uploaded.name.replace(".csv", ""), key="csv_table_name_filtered")
-                add_pk = st.checkbox("เพิ่มคอลัมน์ id (AUTO_INCREMENT Primary Key)", value=True)
-                do_import = st.checkbox("Import ข้อมูลเฉพาะฟิลด์ที่เลือกจาก CSV เข้าตารางทันที", value=True)
-
-                # เดา type เริ่มต้น + UI override (เฉพาะฟิลด์ที่เลือก)
-                st.markdown("### 🧠 เดาชนิดข้อมูล (แก้ได้ก่อนสร้าง)")
-                type_choices = {
-                    "String(255)": "String",
-                    "Text": "Text",
-                    "Integer": "Integer",
-                    "Float": "Float",
-                    "DateTime": "DateTime"
-                }
-
-                sess_key = f"csv_types_{raw_table_name}_filtered"
-                if sess_key not in st.session_state:
-                    st.session_state[sess_key] = {}
-                    st.session_state[sess_key+"_nullable"] = {}
-
-                    # เฉพาะฟิลด์ที่เลือก
-                    for c in selected_columns:
-                        sa_t = _infer_sqlalchemy_type_from_series(df_filtered[c])
-                        # แปลงเป็น label
-                        label = "String(255)"
-                        tname = str(sa_t)
-                        if hasattr(sa_t, "__name__"):
-                            tname = sa_t.__name__
-                        if tname.lower().startswith("string(") or tname.lower().startswith("string"):
-                            label = "String(255)"
-                        elif "text" in tname.lower():
-                            label = "Text"
-                        elif "integer" in tname.lower() or tname.lower() == "integer":
-                            label = "Integer"
-                        elif "float" in tname.lower() or tname.lower() == "float":
-                            label = "Float"
-                        elif "datetime" in tname.lower() or tname.lower() == "datetime":
-                            label = "DateTime"
-                        st.session_state[sess_key][c] = label
-                        st.session_state[sess_key+"_nullable"][c] = True
-
-                overrides = {}
-                nullables = {}
-                # แสดงเฉพาะฟิลด์ที่เลือก
-                for c in selected_columns:
-                    col1, col2, col3 = st.columns([3, 2, 1])
-                    with col1:
-                        st.text_input("ชื่อคอลัมน์ (จากไฟล์)", value=str(c), key=f"name_filtered_{sess_key}_{c}", disabled=True)
-                    with col2:
-                        st.session_state[sess_key][c] = st.selectbox(
-                            "ชนิดข้อมูล",
-                            options=list(type_choices.keys()),
-                            index=list(type_choices.keys()).index(st.session_state[sess_key][c]),
-                            key=f"type_filtered_{sess_key}_{c}"
-                        )
-                    with col3:
-                        st.session_state[sess_key+"_nullable"][c] = st.checkbox(
-                            "Nullable",
-                            value=st.session_state[sess_key+"_nullable"][c],
-                            key=f"null_filtered_{sess_key}_{c}"
-                        )
-
-                    label = st.session_state[sess_key][c]
-                    if label == "String(255)":
-                        sa_type = String(255)
-                    elif label == "Text":
-                        sa_type = Text
-                    elif label == "Integer":
-                        sa_type = Integer
-                    elif label == "Float":
-                        sa_type = Float
-                    elif label == "DateTime":
-                        sa_type = DateTime
-                    else:
-                        sa_type = String(255)
-
-                    overrides[c] = sa_type
-                    nullables[c] = st.session_state[sess_key+"_nullable"][c]
-
-                # สรุปข้อมูลก่อนสร้าง
-                st.markdown("### 📋 สรุปการตั้งค่า")
-                summary_col1, summary_col2 = st.columns(2)
-                with summary_col1:
-                    st.info(f"""
-                    **📊 ข้อมูลทั่วไป:**
-                    - ชื่อตาราง: `{raw_table_name}`
-                    - ฟิลด์ที่เลือก: {len(selected_columns)} จาก {len(df_csv.columns)}
-                    - จำนวนแถว: {len(df_filtered):,}
-                    - เพิ่ม ID: {'✅' if add_pk else '❌'}
-                    - Import ข้อมูล: {'✅' if do_import else '❌'}
-                    """)
-                with summary_col2:
-                    st.info(f"""
-                    **🎯 ฟิลด์ที่เลือก:**
-                    {chr(10).join([f"- {col}" for col in selected_columns])}
-                    """)
-
-                st.markdown("---")
-                if st.button("🚀 สร้างตารางจากฟิลด์ที่เลือก", type="primary"):
-                    if not raw_table_name.strip():
-                        st.error("กรุณาตั้งชื่อ Table")
-                    elif not selected_columns:
-                        st.error("กรุณาเลือกอย่างน้อย 1 ฟิลด์")
-                    else:
-                        # ใช้ DataFrame ที่กรองแล้ว
-                        ok, safe_table, name_map = st.session_state.db_manager.create_table_from_dataframe(
-                            raw_table_name, df_filtered, add_id_pk=add_pk,
-                            dtype_overrides=overrides, nullables=nullables
-                        )
-                        if ok:
-                            st.success(f"✅ สร้างตาราง `{safe_table}` สำเร็จ!")
-                            if do_import:
-                                ok2, nrows = st.session_state.db_manager.bulk_insert_dataframe(
-                                    safe_table, df_filtered, add_id_pk=add_pk, name_map=name_map
-                                )
-                                if ok2:
-                                    st.success(f"📥 นำเข้าข้อมูล {nrows:,} แถว ({len(selected_columns)} ฟิลด์) ลง `{safe_table}` เรียบร้อย")
-                                    
-                                    # แสดงสถิติเพิ่มเติม
-                                    st.info(f"""
-                                    **📊 สรุปการนำเข้า:**
-                                    - ฟิลด์ที่นำเข้า: {', '.join(selected_columns)}
-                                    - ฟิลด์ที่ข้าม: {', '.join([col for col in df_csv.columns if col not in selected_columns])}
-                                    - ขนาดข้อมูล: {len(df_filtered)} แถว × {len(selected_columns)} คอลัมน์
-                                    """)
-                                else:
-                                    st.warning("ตารางถูกสร้างแล้ว แต่นำเข้าข้อมูลไม่สำเร็จ")
+            st.markdown("---")
+            if st.button("🚀 สร้างตารางจาก CSV", type="primary"):
+                if not raw_table_name.strip():
+                    st.error("กรุณาตั้งชื่อ Table")
+                else:
+                    ok, safe_table, name_map = st.session_state.db_manager.create_table_from_dataframe(
+                        raw_table_name, df_csv, add_id_pk=add_pk,
+                        dtype_overrides=overrides, nullables=nullables
+                    )
+                    if ok:
+                        st.success(f"✅ สร้างตาราง `{safe_table}` สำเร็จ!")
+                        if do_import:
+                            ok2, nrows = st.session_state.db_manager.bulk_insert_dataframe(
+                                safe_table, df_csv, add_id_pk=add_pk, name_map=name_map
+                            )
+                            if ok2:
+                                st.success(f"📥 นำเข้าข้อมูล {nrows:,} แถว ลง `{safe_table}` เรียบร้อย")
                             else:
-                                st.info(f"สร้างเฉพาะโครงสร้างตาราง ({len(selected_columns)} ฟิลด์) - ยังไม่นำเข้าข้อมูล")
-
-
-
-
+                                st.warning("ตารางถูกสร้างแล้ว แต่นำเข้าข้อมูลไม่สำเร็จ")
+                        else:
+                            st.info("สร้างเฉพาะโครงสร้างตาราง (ยังไม่นำเข้าข้อมูล)")
 
 def show_select_table_interface():
     """แสดง interface สำหรับเลือก table ที่มีอยู่"""
