@@ -5,14 +5,12 @@ import json
 import base64
 import requests
 from datetime import datetime, date
-from sqlalchemy import create_engine, text, inspect, MetaData, Table, Column, Integer, String, Text, DateTime, Float
+from sqlalchemy import create_engine, text, inspect, MetaData, Table, Column, Integer, String, Text, DateTime, Float, event
 from sqlalchemy.exc import SQLAlchemyError
 import pymysql
 import os
 import time
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
-from sqlalchemy import event
-
 
 # Configuration
 st.set_page_config(
@@ -259,43 +257,41 @@ def _ensure_mysql_utf8mb4(url: str) -> str:
     except Exception:
         return url
 
-
 class DatabaseManager:
     def __init__(self):
         self.engine = None
         self.connect_to_database()
     
     def connect_to_database(self):
-    """เชื่อมต่อกับ TiDB/MySQL ด้วย utf8mb4"""
-    try:
-        if not TIDB_URL:
-            st.error("❌ TIDB_URL ไม่ได้กำหนดใน environment variables")
+        """เชื่อมต่อกับ TiDB/MySQL ด้วย utf8mb4"""
+        try:
+            if not TIDB_URL:
+                st.error("❌ TIDB_URL ไม่ได้กำหนดใน environment variables")
+                return False
+
+            tidb_url = _ensure_mysql_utf8mb4(TIDB_URL)
+
+            # บังคับ charset ฝั่ง driver ด้วย
+            self.engine = create_engine(
+                tidb_url,
+                pool_pre_ping=True,
+                pool_recycle=300,
+                connect_args={"charset": "utf8mb4", "use_unicode": True}
+            )
+
+            # บังคับ session ให้เป็น utf8mb4 เสมอ
+            @event.listens_for(self.engine, "connect")
+            def _set_names_utf8mb4(dbapi_connection, connection_record):
+                with dbapi_connection.cursor() as cur:
+                    cur.execute("SET NAMES utf8mb4")
+
+            # ทดสอบการเชื่อมต่อ
+            with self.engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return True
+        except Exception as e:
+            st.error(f"❌ ไม่สามารถเชื่อมต่อ Database ได้: {str(e)}")
             return False
-
-        tidb_url = _ensure_mysql_utf8mb4(TIDB_URL)
-
-        # บังคับ charset ฝั่ง driver ด้วย
-        self.engine = create_engine(
-            tidb_url,
-            pool_pre_ping=True,
-            pool_recycle=300,
-            connect_args={"charset": "utf8mb4", "use_unicode": True}
-        )
-
-        # บังคับ session ให้เป็น utf8mb4 เสมอ (กันเซิร์ฟเวอร์ตั้งค่าอื่น)
-        @event.listens_for(self.engine, "connect")
-        def _set_names_utf8mb4(dbapi_connection, connection_record):
-            with dbapi_connection.cursor() as cur:
-                cur.execute("SET NAMES utf8mb4")
-
-        # ทดสอบการเชื่อมต่อ
-        with self.engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return True
-    except Exception as e:
-        st.error(f"❌ ไม่สามารถเชื่อมต่อ Database ได้: {str(e)}")
-        return False
-
     
     def get_existing_tables(self):
         """ดึงรายชื่อ tables ที่มีอยู่ในระบบ"""
@@ -353,7 +349,7 @@ class DatabaseManager:
                                 'similarity': float(similarity),
                                 'metadata': json.loads(row[3]) if row[3] else {}
                             })
-                    except Exception as e:
+                    except Exception:
                         continue
                 
                 similarities.sort(key=lambda x: x['similarity'], reverse=True)
@@ -393,16 +389,15 @@ class DatabaseManager:
                 
                 table_columns.append(column)
             
-           table = Table(
-    table_name, metadata, *table_columns,
-    mysql_charset='utf8mb4', mysql_collate='utf8mb4_unicode_ci'
-)
-metadata.create_all(self.engine)
+            table = Table(
+                table_name, metadata, *table_columns,
+                mysql_charset='utf8mb4', mysql_collate='utf8mb4_unicode_ci'
+            )
+            metadata.create_all(self.engine)
 
-# เผื่อเซิร์ฟเวอร์ไม่ใช้ collation นี้เป็นค่าเริ่ม
-with self.engine.begin() as conn:
-    conn.execute(text(f"ALTER TABLE {table_name} CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
-
+            # เผื่อ default DB ไม่ใช่ utf8mb4
+            with self.engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table_name} CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
             
             return True
         except Exception as e:
@@ -448,7 +443,6 @@ with self.engine.begin() as conn:
                 if add_id_pk and safe_c == 'id':
                     continue
 
-                # ตีความชนิด
                 if original_c in dtype_overrides and dtype_overrides[original_c]:
                     sa_type = dtype_overrides[original_c]
                 else:
@@ -459,21 +453,19 @@ with self.engine.begin() as conn:
                 if hasattr(sa_type, 'length') or sa_type in [Text, Integer, Float, DateTime]:
                     columns.append(Column(safe_c, sa_type, nullable=is_nullable))
                 else:
-                    # หากเป็น class เช่น String/Integer
                     if getattr(sa_type, "__name__", "") == 'String':
                         columns.append(Column(safe_c, String(255), nullable=is_nullable))
                     else:
                         columns.append(Column(safe_c, sa_type(), nullable=is_nullable))
 
-           table = Table(
-    safe_table_name, metadata, *columns,
-    mysql_charset='utf8mb4', mysql_collate='utf8mb4_unicode_ci'
-)
-metadata.create_all(self.engine)
-with self.engine.begin() as conn:
-    conn.execute(text(f"ALTER TABLE {safe_table_name} CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
-return True, safe_table_name, name_map
-
+            table = Table(
+                safe_table_name, metadata, *columns,
+                mysql_charset='utf8mb4', mysql_collate='utf8mb4_unicode_ci'
+            )
+            metadata.create_all(self.engine)
+            with self.engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {safe_table_name} CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
+            return True, safe_table_name, name_map
         except Exception as e:
             st.error(f"❌ ไม่สามารถสร้าง table จาก CSV ได้: {str(e)}")
             return False, None, {}
@@ -828,7 +820,7 @@ def check_api_status():
     
     return status
 
-# ================== แก้ฟังก์ชันนี้: เพิ่มแท็บ "สร้างจาก CSV" ==================
+# ================== มีแท็บ "สร้างจาก CSV" ==================
 def show_create_table_interface():
     """แสดง interface สำหรับสร้าง table ใหม่ (กำหนดเอง / จาก CSV)"""
     st.markdown("""
@@ -1433,7 +1425,7 @@ def run_embedding_process(table_name, batch_size, max_records, source_columns, s
                     else:
                         error_count += 1
                         
-                except Exception as e:
+                except Exception:
                     error_count += 1
             
             if batch_embeddings:
@@ -1570,7 +1562,6 @@ def main():
             <div style="display: flex; align-items: center; padding: 0.5rem; background: linear-gradient(135deg, #7f1d1d, #991b1b); border-radius: 8px; margin-bottom: 0.5rem;">
                 <span style="color: #ef4444; margin-right: 0.5rem;">●</span>
                 <div>
-                    <div style="color: #fecaca; font-weight: 600; font-size: 0.9rem;">Embedding API</div>
                     <div style="color: #fca5a5; font-size: 0.8rem;">{api_status['embedding_api']['message']}</div>
                     <div style="color: #f87171; font-size: 0.7rem;">Server: {EMBEDDING_API_URL}</div>
                 </div>
