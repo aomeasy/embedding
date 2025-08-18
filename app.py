@@ -644,25 +644,42 @@ def show_embedding_interface():
     tables = st.session_state.db_manager.get_existing_tables()
     
     if tables:
-        # กรอง tables ที่มี name column
-        suitable_tables = []
-        for table in tables:
-            columns = st.session_state.db_manager.get_table_columns(table)
-            column_names = [col['name'] for col in columns]
-            if 'name' in column_names:
-                suitable_tables.append(table)
+        selected_table = st.selectbox("🎯 เลือก Table:", options=tables)
         
-        if suitable_tables:
-            selected_table = st.selectbox("🎯 เลือก Table:", options=suitable_tables)
+        if selected_table:
+            # ดึงข้อมูล columns ของ table ที่เลือก
+            columns = st.session_state.db_manager.get_table_columns(selected_table)
+            column_names = [col['name'] for col in columns]
             
-            if selected_table:
+            # ให้ผู้ใช้เลือก column ที่จะใช้สำหรับสร้าง embedding
+            text_columns = []
+            for col in columns:
+                col_type = str(col['type']).lower()
+                # กรองเฉพาะ columns ที่เป็น text/string
+                if any(t in col_type for t in ['varchar', 'text', 'char', 'string']):
+                    text_columns.append(col['name'])
+            
+            if text_columns:
+                source_column = st.selectbox("📝 เลือก Column สำหรับสร้าง Embedding:", 
+                                           options=text_columns, 
+                                           help="เลือก column ที่มีข้อความสำหรับสร้าง vector embeddings")
+                
                 # แสดงข้อมูล table
                 data, column_names = st.session_state.db_manager.get_table_data_sample(selected_table)
                 
                 if data:
                     st.markdown(f"### 📊 ข้อมูลตัวอย่างจาก {selected_table}")
                     sample_df = pd.DataFrame(data, columns=column_names)
-                    st.dataframe(sample_df, use_container_width=True)
+                    
+                    # แสดงเฉพาะ columns ที่สำคัญ (id, source column, และ columns อื่นๆ ที่เกี่ยวข้อง)
+                    display_columns = ['id'] if 'id' in sample_df.columns else []
+                    if source_column in sample_df.columns:
+                        display_columns.append(source_column)
+                    # เพิ่ม columns อื่นๆ ไม่เกิน 5 columns ทั้งหมด
+                    other_cols = [col for col in sample_df.columns if col not in display_columns][:3]
+                    display_columns.extend(other_cols)
+                    
+                    st.dataframe(sample_df[display_columns], use_container_width=True)
                     
                     # แสดงจำนวนข้อมูลทั้งหมด
                     try:
@@ -705,20 +722,23 @@ def show_embedding_interface():
                     st.markdown("### 🔗 API Configuration")
                     st.text(f"API URL: {EMBEDDING_API_URL}")
                     st.text(f"Model: {EMBEDDING_MODEL}")
+                    st.text(f"Source Column: {source_column}")
                     
                     # ปุ่มเริ่มประมวลผล
                     if st.button("🚀 เริ่มสร้าง Embeddings", type="primary"):
-                        run_embedding_process(selected_table, batch_size, max_records)
+                        run_embedding_process(selected_table, batch_size, max_records, source_column)
                         
                 else:
                     st.info("Table นี้ยังไม่มีข้อมูล")
-        else:
-            st.markdown("""
-            <div class="error-box">
-                <h3>❌ ไม่พบ Table ที่เหมาะสม</h3>
-                <p>ต้องมี table ที่มี column 'name' สำหรับการสร้าง embeddings</p>
-            </div>
-            """, unsafe_allow_html=True)
+                    
+            else:
+                st.markdown("""
+                <div class="error-box">
+                    <h3>❌ ไม่พบ Text Column ที่เหมาะสม</h3>
+                    <p>Table นี้ไม่มี column ประเภท text/varchar ที่สามารถใช้สร้าง embeddings ได้</p>
+                    <p>Columns ที่มีอยู่: {}</p>
+                </div>
+                """.format(', '.join(column_names)), unsafe_allow_html=True)
     else:
         st.markdown("""
         <div class="error-box">
@@ -727,7 +747,8 @@ def show_embedding_interface():
         </div>
         """, unsafe_allow_html=True)
 
-def run_embedding_process(table_name, batch_size, max_records):
+
+def run_embedding_process(table_name, batch_size, max_records, source_column):
     """รันกระบวนการสร้าง embeddings"""
     try:
         # สร้าง embedding table
@@ -737,7 +758,7 @@ def run_embedding_process(table_name, batch_size, max_records):
             conn.execute(text(f"""
                 CREATE TABLE IF NOT EXISTS {embedding_table} (
                     id INT PRIMARY KEY,
-                    name VARCHAR(255),
+                    source_text TEXT,
                     embedding LONGBLOB,
                     metadata JSON,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -757,25 +778,32 @@ def run_embedding_process(table_name, batch_size, max_records):
             except:
                 embedded_ids = set()
             
-            # ดึงข้อมูลที่ยังไม่ได้ embed
+            # ดึงข้อมูลที่ยังไม่ได้ embed โดยใช้ source_column ที่เลือก
             if embedded_ids:
                 ids_placeholder = ', '.join(map(str, embedded_ids))
                 query = f"""
-                SELECT id, name FROM {table_name} 
+                SELECT id, {source_column} FROM {table_name} 
                 WHERE id NOT IN ({ids_placeholder}) 
+                AND {source_column} IS NOT NULL 
+                AND TRIM({source_column}) != ''
                 LIMIT {max_records}
                 """
             else:
-                query = f"SELECT id, name FROM {table_name} LIMIT {max_records}"
+                query = f"""
+                SELECT id, {source_column} FROM {table_name} 
+                WHERE {source_column} IS NOT NULL 
+                AND TRIM({source_column}) != ''
+                LIMIT {max_records}
+                """
             
             result = conn.execute(text(query))
             data = result.fetchall()
         
         if not data:
-            st.info("✅ ข้อมูลทั้งหมด embedded เรียบร้อยแล้ว")
+            st.info("✅ ข้อมูลทั้งหมด embedded เรียบร้อยแล้ว หรือไม่มีข้อมูลที่ไม่เป็นค่าว่าง")
             return
         
-        st.info(f"🔄 กำลังประมวลผล {len(data):,} records...")
+        st.info(f"🔄 กำลังประมวลผล {len(data):,} records จาก column '{source_column}'...")
         
         # สร้าง progress tracking
         progress_bar = st.progress(0)
@@ -793,11 +821,17 @@ def run_embedding_process(table_name, batch_size, max_records):
             for record in batch_data:
                 try:
                     # เรียก API สร้าง embedding
+                    text_content = str(record[1]) if record[1] else ""
+                    
+                    if not text_content.strip():
+                        error_count += 1
+                        continue
+                    
                     response = requests.post(
                         EMBEDDING_API_URL,
                         json={
                             "model": EMBEDDING_MODEL,
-                            "prompt": str(record[1])  # name column
+                            "prompt": text_content
                         },
                         timeout=30
                     )
@@ -807,7 +841,7 @@ def run_embedding_process(table_name, batch_size, max_records):
                         if "embedding" in result:
                             batch_embeddings.append({
                                 "id": record[0],
-                                "name": record[1],
+                                "source_text": text_content,
                                 "embedding": result["embedding"]
                             })
                             success_count += 1
@@ -829,18 +863,22 @@ def run_embedding_process(table_name, batch_size, max_records):
                             
                             conn.execute(
                                 text(f"""
-                                    INSERT INTO {embedding_table} (id, name, embedding, metadata)
-                                    VALUES (:id, :name, :embedding, :metadata)
+                                    INSERT INTO {embedding_table} (id, source_text, embedding, metadata)
+                                    VALUES (:id, :source_text, :embedding, :metadata)
                                     ON DUPLICATE KEY UPDATE
-                                      name = VALUES(name),
+                                      source_text = VALUES(source_text),
                                       embedding = VALUES(embedding),
                                       metadata = VALUES(metadata)
                                 """),
                                 {
                                     "id": item["id"],
-                                    "name": item["name"][:255],
+                                    "source_text": item["source_text"][:500],  # จำกัดความยาว
                                     "embedding": vector_bytes,
-                                    "metadata": json.dumps({"original_id": item["id"]})
+                                    "metadata": json.dumps({
+                                        "original_id": item["id"],
+                                        "source_column": source_column,
+                                        "text_length": len(item["source_text"])
+                                    })
                                 }
                             )
                         except Exception as e:
@@ -861,6 +899,7 @@ def run_embedding_process(table_name, batch_size, max_records):
             <p>✅ สำเร็จ: {success_count:,} records</p>
             <p>❌ ผิดพลาด: {error_count:,} records</p>
             <p>📊 บันทึกใน table: {embedding_table}</p>
+            <p>📝 Source column: {source_column}</p>
         </div>
         """, unsafe_allow_html=True)
         
