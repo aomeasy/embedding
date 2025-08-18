@@ -474,10 +474,36 @@ def test_embedding_api():
         print_status("error", f"API test failed: {e}")
         return False
 
+def show_system_status():
+    """แสดงสถานะระบบแบบ real-time"""
+    print_header("System Status Check")
+    
+    # ตรวจสอบ Database
+    print_status("running", "Checking Database connection...")
+    if test_database_connection():
+        print_status("success", "Database: ✅ Connected")
+    else:
+        print_status("error", "Database: ❌ Connection failed")
+    
+    # ตรวจสอบ API
+    print_status("running", "Checking Embedding API...")
+    if test_embedding_api():
+        print_status("success", f"Embedding API: ✅ Ready (Model: {EMBEDDING_MODEL})")
+    else:
+        print_status("error", f"Embedding API: ❌ Not available (Server: {EMBEDDING_API_URL})")
+    
+    print_status("info", f"API URL: {EMBEDDING_API_URL}")
+    print_status("info", f"Model: {EMBEDDING_MODEL}")
+
 def main():
     """Main function"""
     print_header("AI/ML Data Management System - CLI Version")
-    
+
+    # เพิ่มตรวจสอบ argument สำหรับแสดงสถานะ
+    if len(sys.argv) > 1 and sys.argv[1] == "--status":
+        show_system_status()
+        return
+        
     # สร้าง GracefulKiller instance
     killer = GracefulKiller()
     
